@@ -848,3 +848,22 @@ def test_followup_failures_do_not_undo_a_merge(env: Env):
     out = env.engine(planner=planner).run(1)
     assert out.ticket.state is State.MERGED and host.merged
     assert env.store.events("#1", "followup_error")
+
+
+def test_every_structured_request_carries_its_json_schema(env: Env):
+    env.engine().run(1)
+    system = env.planner.calls[0].system
+    assert "Required reply format" in system
+    # the real schema text, so the agent does not have to guess the shape
+    assert '"acceptance_criteria"' in system and '"steps"' in system and '"required"' in system
+    env.say("alice", "/approve")
+    env.engine().run(1)
+    assert '"verdict"' in env.review_agent.calls[0].system
+    assert "Required reply format" not in env.coder_agent.calls[-1].system  # coder is not JSON
+
+
+def test_a_repo_local_schema_is_what_the_agent_is_shown(env: Env):
+    custom = env.repo / ".devflow" / "schemas" / "plan.schema.json"
+    custom.write_text('{"type":"object","title":"MY-CUSTOM-PLAN","required":["status"]}')
+    env.engine().run(1)
+    assert "MY-CUSTOM-PLAN" in env.planner.calls[0].system

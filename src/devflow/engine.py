@@ -206,6 +206,8 @@ class Engine:
         wt = cwd or self._wt(ticket)
         graphctx.ensure_fresh(wt, builder=self.graph_builder)  # best effort; digest says if absent
         system = prompts.role_prompt(self.cfg.root, role) + "\n\n" + graphctx.agent_preamble(wt, files)
+        if schema:
+            system += "\n\n" + prompts.schema_block(schema, self.cfg.root)
         return AgentRequest(
             role=role, prompt=prompt, cwd=wt, system=system, schema=schema, read_only=read_only,
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,

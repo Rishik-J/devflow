@@ -32,6 +32,19 @@ def role_prompt(root: Path, role: str) -> str:
     return path.read_text()
 
 
+def schema_block(name: str, root: Path) -> str:
+    """The exact JSON Schema the reply must satisfy, so the agent never has to guess its shape."""
+    from . import schema
+
+    compact = json.dumps(schema.load_schema(name, root), separators=(",", ":"))
+    return (
+        "## Required reply format\n"
+        "Reply with ONE JSON object that validates against this JSON Schema, and nothing else "
+        "(no prose, no code fences). Include every required property, including the `id` "
+        f"fields.\n\n{compact}"
+    )
+
+
 def fence(label: str, text: str) -> str:
     return f"<<<{label}\n{text.strip()}\n{label}>>>"
 
