@@ -867,3 +867,81 @@ def test_a_repo_local_schema_is_what_the_agent_is_shown(env: Env):
     custom.write_text('{"type":"object","title":"MY-CUSTOM-PLAN","required":["status"]}')
     env.engine().run(1)
     assert "MY-CUSTOM-PLAN" in env.planner.calls[0].system
+
+
+# ---------------------------------------------------------------- what was reviewed is what merges
+
+
+def two_round_run(env: Env):
+    """Round 1 is rejected; the coder's fix is a second commit; round 2 is approved."""
+    asked = {"verdict": "request_changes", "integration": {"ran": True, "passed": True},
+             "findings": [{"id": "F", "severity": "major", "blocking": True, "file": "src/calc.py",
+                           "summary": "document the limits"}]}
+    replies = [asked, APPROVE]
+    n = itertools.count()
+
+    def coder(req):
+        good_coder(req)
+        if next(n):  # second call: the fix
+            (req.cwd / "src" / "calc.py").write_text(CALC_MULT + "# limits documented\n")
+        return "ok"
+
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    out = env.engine(coder=coder, reviewer=lambda r: replies.pop(0)).run(1)
+    assert out.ticket.state is State.AWAITING_MERGE_APPROVAL and out.ticket.review_round == 1
+    return out.ticket
+
+
+def test_the_fix_commit_from_a_second_round_reaches_the_remote(env: Env):
+    """Regression: the branch used to be pushed only when the PR was created."""
+    t = two_round_run(env)
+    local = gitops.head_sha(Path(t.worktree))
+    assert gitops.remote_head(Path(t.worktree), t.branch) == local
+    assert len(git(Path(t.worktree), "rev-list", "--count", f"{t.base_sha}..HEAD")) and \
+        git(Path(t.worktree), "rev-list", "--count", f"{t.base_sha}..HEAD") == "2"
+    review = env.store.stage_results("#1", "review")[-1]["payload"]
+    assert review["sha"] == local and t.sessions["reviewed_sha"] == local
+
+
+def test_the_merge_is_pinned_to_the_reviewed_commit(env: Env):
+    t = two_round_run(env)
+    env.say("alice", "/approve", number=env.pr())
+    out = env.engine().run(1)
+    assert out.ticket.state is State.MERGED
+    assert env.host.merged_at[env.pr()] == t.sessions["reviewed_sha"] != ""
+
+
+def test_a_push_after_review_blocks_the_merge(env: Env, tmp_path: Path):
+    t = two_round_run(env)
+    other = tmp_path / "someone-else"
+    subprocess.run(["git", "clone", "-q", str(tmp_path / "origin.git"), str(other)], check=True)
+    git(other, "checkout", "-q", t.branch)
+    (other / "sneaky.py").write_text("# added after review\n")
+    commit_all(other, "sneak in a change")
+    git(other, "push", "-q", "origin", t.branch)
+
+    env.say("alice", "/approve", number=env.pr())
+    out = env.engine().run(1)
+    assert out.status == "escalated" and not env.host.merged
+    assert "nobody reviewed" in out.reason and t.sessions["reviewed_sha"][:8] in out.reason
+
+
+def test_a_failed_push_is_not_silently_ignored(env: Env, monkeypatch):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    monkeypatch.setattr(gitops, "remote_head", lambda path, branch: "0" * 40)
+    out = env.engine().run(1)
+    assert out.ticket.state is State.IN_REVIEW and "will retry" in out.reason
+    assert "is 00000000 but the local branch is" in out.reason
+
+
+def test_a_ticket_with_no_record_of_the_reviewed_commit_cannot_reach_a_merge(env: Env):
+    drive_to_merge_gate(env)
+    t = env.ticket()
+    t.sessions.pop("reviewed_sha")  # a ticket reviewed before this safeguard existed
+    env.store.save_ticket(t)
+    env.say("alice", "/approve", number=env.pr())
+    out = env.engine().run(1)
+    assert out.status == "escalated" and "no record of which commit was reviewed" in out.reason
+    assert not env.host.merged

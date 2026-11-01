@@ -190,3 +190,13 @@ def test_list_open_issues_and_ensure_label():
     GhHost("a/b", gh).ensure_label("devflow", "0e8a16", "desc")
     label_cmd = gh.calls[-1][0]
     assert label_cmd[1:3] == ["label", "create"] and "--force" in label_cmd
+
+
+def test_merge_is_pinned_to_the_reviewed_commit_when_given():
+    gh = Gh("")
+    GhHost("a/b", gh).merge_pr(3, "abc123")
+    cmd = gh.calls[0][0]
+    assert cmd[cmd.index("--match-head-commit") + 1] == "abc123" and "--squash" in cmd
+    gh2 = Gh("")
+    GhHost("a/b", gh2).merge_pr(3)
+    assert "--match-head-commit" not in gh2.calls[0][0]

@@ -86,3 +86,19 @@ def has_changes_since(path: Path, base: str) -> bool:
 
 def push(path: Path, branch: str) -> None:
     git(path, "push", "-u", "origin", branch, timeout=300)
+
+
+def remote_head(path: Path, branch: str) -> str:
+    """The commit the remote really has for `branch` (empty if it has none)."""
+    out = git(path, "ls-remote", "origin", f"refs/heads/{branch}", timeout=120).strip()
+    return out.split()[0] if out else ""
+
+
+def push_and_verify(path: Path, branch: str) -> str:
+    """Push, then confirm the remote branch is exactly our HEAD. Returns that commit."""
+    push(path, branch)
+    head, remote = head_sha(path), remote_head(path, branch)
+    if remote != head:
+        raise GitError(f"after pushing, origin/{branch} is {remote[:8] or 'missing'} "
+                       f"but the local branch is {head[:8]}")
+    return head

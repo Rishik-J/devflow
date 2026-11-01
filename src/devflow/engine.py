@@ -459,11 +459,14 @@ class Engine:
 
     def _in_review(self, t: Ticket) -> None:
         wt, plan = self._wt(t), self._latest(t, "plan") or {}
+        # Push on EVERY pass, not only when the PR is created: after a review round the coder's
+        # fix is a new commit, and the review (and the human's merge approval) must be about
+        # the commit that is actually on GitHub.
+        if self.dry_run:
+            self.log(f"dry-run: would push {t.branch}")
+        else:
+            gitops.push_and_verify(wt, t.branch)
         if "pr" not in t.sessions:
-            if self.dry_run:
-                self.log(f"dry-run: would push {t.branch}")
-            else:
-                gitops.push(wt, t.branch)
             body = (f"Closes #{t.issue}\n\n**Goal:** {plan.get('goal', '')}\n\n"
                     + "\n".join(f"- {a['id']}: {a['text']}" for a in plan.get("acceptance_criteria", []))
                     + "\n\n_Opened by devflow._")
@@ -500,6 +503,7 @@ class Engine:
                              "file": "(gates)", "summary": "The reviewer approved but the engine's "
                              "own gate run failed:\n" + self._failure_text(verdict, findings)})
         self._put(t, "review", {"agent": routed.agent, "independent": routed.independent,
+                                "sha": head,
                                 "verdict": review["verdict"], "approved": approved,
                                 "findings": review["findings"], "engine_gates_ok": engine_ok,
                                 "facts": facts, "notes": review["integration"].get("notes", ""),
@@ -508,6 +512,7 @@ class Engine:
                   number=self._pr_number(t))
 
         if approved:
+            t.sessions["reviewed_sha"] = head
             t.sessions.pop("review_fail_sig", None)
             self.store.save_ticket(t)
             self.notifier.send(f"#{t.issue} ({t.title}): reviewed and ready to merge.")
@@ -551,6 +556,10 @@ class Engine:
             return
         if pr.state == "closed":
             raise _Escalate("the pull request was closed without merging")
+        if not t.sessions.get("reviewed_sha") and not self.dry_run:
+            # Never ask a person to approve (or merge) a commit we cannot name as reviewed.
+            raise _Escalate("there is no record of which commit was reviewed, so the merge "
+                            "cannot be pinned to it. Comment /resume to have it reviewed again.")
         approved_by_human = False
         if self._gate_on("merge_approval"):
             cmds = self._commands(t, number, ("approve", "reject"))
@@ -574,7 +583,15 @@ class Engine:
             self.store.save_ticket(t)
             self._move(t, State.CHANGES_REQUESTED, "engine", "CI failed")
             return
-        self.host.merge_pr(number)
+        reviewed = t.sessions.get("reviewed_sha", "")
+        if not self.dry_run:
+            on_github = gitops.remote_head(self._wt(t), t.branch)
+            if on_github != reviewed:
+                raise _Escalate(
+                    f"the pull request branch is at {on_github[:8] or 'nothing'} but the "
+                    f"approved review was of {reviewed[:8]}. Someone pushed after review; "
+                    "refusing to merge a commit nobody reviewed.")
+        self.host.merge_pr(number, reviewed)
         self._finish(t)
 
     def _unconsume_last(self, t: Ticket) -> None:

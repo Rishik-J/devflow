@@ -59,7 +59,7 @@ class Host(Protocol):
     def create_pr(self, head: str, base: str, title: str, body: str) -> PullRequest: ...
     def get_pr(self, number: int) -> PullRequest: ...
     def checks(self, pr_number: int) -> str: ...  # success | failure | pending | none
-    def merge_pr(self, pr_number: int) -> None: ...
+    def merge_pr(self, pr_number: int, expected_sha: str = "") -> None: ...
     def create_issue(self, title: str, body: str, labels: list[str]) -> Issue: ...
     def list_open_issues(self, label: str | None = None) -> list[Issue]: ...
     def ensure_label(self, name: str, color: str = "ededed", description: str = "") -> None: ...
@@ -180,8 +180,12 @@ class GhHost:
             return "pending"
         return "success"
 
-    def merge_pr(self, pr_number: int) -> None:
-        self._gh("pr", "merge", str(pr_number), "-R", self.slug, "--squash")
+    def merge_pr(self, pr_number: int, expected_sha: str = "") -> None:
+        args = ["pr", "merge", str(pr_number), "-R", self.slug, "--squash"]
+        if expected_sha:
+            # GitHub refuses the merge if the branch moved since this commit was reviewed
+            args += ["--match-head-commit", expected_sha]
+        self._gh(*args)
 
     def create_issue(self, title: str, body: str, labels: list[str]) -> Issue:
         args = ["issue", "create", "-R", self.slug, "--title", title, "--body-file", "-"]
@@ -242,8 +246,8 @@ class DryRunHost:
     def checks(self, pr_number: int) -> str:
         return "none"
 
-    def merge_pr(self, pr_number: int) -> None:
-        self.writes.append(f"merge PR #{pr_number}")
+    def merge_pr(self, pr_number: int, expected_sha: str = "") -> None:
+        self.writes.append(f"merge PR #{pr_number} at {expected_sha[:8] or 'head'}")
 
     def create_issue(self, title: str, body: str, labels: list[str]) -> Issue:
         self.writes.append(f"create issue {title!r} labels={labels}")
@@ -318,9 +322,10 @@ class FakeHost:
     def checks(self, pr_number: int) -> str:
         return self.pr_checks.get(pr_number, "none")
 
-    def merge_pr(self, pr_number: int) -> None:
+    def merge_pr(self, pr_number: int, expected_sha: str = "") -> None:
         self.prs[pr_number].state = "merged"
         self.merged.append(pr_number)
+        self.merged_at = getattr(self, "merged_at", {}) | {pr_number: expected_sha}
 
     def create_issue(self, title: str, body: str, labels: list[str]) -> Issue:
         number = max([99, *self.issues]) + 1
