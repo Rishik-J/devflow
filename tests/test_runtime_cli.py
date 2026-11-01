@@ -154,3 +154,46 @@ def test_setup_openclaw_command(monkeypatch, capsys):
                         lambda model: openclaw_setup.SetupResult(True, f"created with {model}"))
     assert cli.main(["setup-openclaw", "--model", "m1"]) == 0
     assert "created with m1" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- dry runs leave no trace
+
+
+def test_dry_run_uses_a_separate_throwaway_database(env: Env):
+    from devflow.store import dry_run_db_path, state_db_path
+
+    env.store.close()
+    _, store, _ = runtime.build_engine(env.repo, host=env.host, dry_run=True)
+    try:
+        assert store.path == dry_run_db_path(env.repo) != state_db_path(env.repo)
+        store.save_ticket(Ticket(id="#1", issue=1))
+    finally:
+        store.close()
+    _, again, _ = runtime.build_engine(env.repo, host=env.host, dry_run=True)
+    try:
+        assert again.get_ticket("#1") is None  # every dry run starts from nothing
+    finally:
+        again.close()
+    env.store = type(env.store)(state_db_path(env.repo))
+    assert env.store.get_ticket("#1") is None  # and the real database never saw it
+
+
+def test_dry_run_cleanup_removes_its_worktree_and_branch(env: Env):
+    from tests.conftest import git
+
+    eng = env.engine(dry_run=True)
+    out = eng.run(1)
+    wt = Path(out.ticket.worktree)
+    assert wt.exists() and out.ticket.branch in git(env.repo, "branch", "--list")
+    eng.cleanup_dry_run()
+    assert not wt.exists() and out.ticket.branch not in git(env.repo, "branch", "--list")
+    assert env.repo.exists() and (env.repo / ".git").exists()
+
+
+def test_dry_run_cleanup_never_touches_other_branches(env: Env):
+    from tests.conftest import git
+
+    eng = env.engine(dry_run=True)
+    eng.run(1)
+    eng.cleanup_dry_run()
+    assert "main" in git(env.repo, "branch", "--list")

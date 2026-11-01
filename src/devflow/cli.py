@@ -131,6 +131,9 @@ def _ticket(args: argparse.Namespace) -> int:
             print("dry run: would have written to GitHub:")
             for w in getattr(engine.host, "writes", []):
                 print(f"  - {w}")
+            for w in getattr(engine.board, "writes", []):
+                print(f"  - {w}")
+            engine.cleanup_dry_run()
         store.close()
     if outcome is None:
         return 130

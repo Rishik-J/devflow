@@ -12,7 +12,7 @@ from .host import DryRunHost, GhHost, Host, repo_slug
 from .loadconfig import Config, load_config
 from .notify import make_notifier
 from .router import build_router
-from .store import Store, state_db_path
+from .store import Store, reset_dry_run_db, state_db_path
 
 ENGINE_ROLES = ("planner", "triage")
 
@@ -30,7 +30,8 @@ def build_engine(
     The caller owns the returned Store and should close it.
     """
     cfg = load_config(root)
-    store = Store(state_db_path(root))
+    # A dry run starts from nothing every time and never touches the real ticket database.
+    store = Store(reset_dry_run_db(root) if dry_run else state_db_path(root))
     real: Host = host or GhHost(repo_slug(cfg.remote))
     queue = board or make_board(cfg)
     if queue is not None and dry_run:

@@ -610,6 +610,14 @@ class Engine:
         lines = "\n".join(f"- #{f.issue.number} {f.candidate.title}" for f in report.filed)
         return ("\n\nFiled in Backlog (move to Ready to work them):\n" + lines)
 
+    def cleanup_dry_run(self) -> None:
+        """Remove the local worktrees and branches a dry run created. Nothing was pushed."""
+        for t in self.store.list_tickets():
+            for path in (t.worktree, str(self.cfg.worktree_root
+                                         / f"{t.branch.split('/', 1)[-1]}-review")):
+                if path and Path(path).exists():
+                    worktree.remove(self.cfg.root, Path(path), delete_branch=path == t.worktree)
+
     # ------------------------------------------------------------------ escalation
 
     def _escalated(self, t: Ticket) -> None:

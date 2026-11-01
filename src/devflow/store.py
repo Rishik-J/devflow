@@ -81,6 +81,18 @@ def state_db_path(root: Path) -> Path:
     return root / ".devflow" / "state" / "devflow.db"
 
 
+def dry_run_db_path(root: Path) -> Path:
+    """A dry run keeps its own throwaway database, so it can never be mistaken for real work."""
+    return root / ".devflow" / "state" / "dry-run.db"
+
+
+def reset_dry_run_db(root: Path) -> Path:
+    path = dry_run_db_path(root)
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+    return path
+
+
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
