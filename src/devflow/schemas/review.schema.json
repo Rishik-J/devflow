@@ -16,7 +16,7 @@
           "blocking": { "type": "boolean" },
           "file": { "type": "string" },
           "line": { "type": "integer" },
-          "summary": { "type": "string" },
+          "summary": { "type": "string", "minLength": 1 },
           "suggested_fix": { "type": "string" }
         }
       }
@@ -31,5 +31,17 @@
         "notes": { "type": "string" }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "request_changes" } }, "required": ["verdict"] },
+      "then": {
+        "properties": {
+          "findings": {
+            "contains": { "properties": { "blocking": { "const": true } }, "required": ["blocking"] }
+          }
+        }
+      }
+    }
+  ]
 }

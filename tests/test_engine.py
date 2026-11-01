@@ -1,3 +1,4 @@
+import itertools
 import json
 import subprocess
 import sys
@@ -122,6 +123,14 @@ class Env:
         return int(self.ticket().sessions["pr"])
 
 
+_attempt = itertools.count(1)
+
+
+def bad_calc() -> str:
+    """A different broken add() each time, so the coder visibly changes something."""
+    return f"def add(a, b):\n    return a - b  # attempt {next(_attempt)}\n"
+
+
 def good_coder(req):
     (req.cwd / "src" / "calc.py").write_text(CALC_MULT)
     (req.cwd / "tests" / "test_mult.py").write_text(TEST_MULT)
@@ -214,7 +223,13 @@ def test_a_command_is_consumed_only_once(env: Env):
     drive_to_merge_gate(env)
     env.host.pr_checks[env.pr()] = "failure"
     env.say("alice", "/approve", number=env.pr())
-    out = env.engine().run(1)
+
+    def fixer(req):
+        good_coder(req)
+        (req.cwd / "src" / "ci_fix.py").write_text("# fix for CI\n")
+        return "fixed"
+
+    out = env.engine(coder=fixer).run(1)
     approvals = [e for e in env.store.events("#1", "command") if e["command"] == "approve"]
     assert len({a["comment_id"] for a in approvals}) == len(approvals) == 2  # plan, then merge
     # after the fix round the old merge approval is spent: a new one is required
@@ -289,7 +304,7 @@ def test_gate_failure_goes_back_to_the_coder_with_the_failure_and_session(env: E
 
 def test_implementation_attempts_are_capped_and_the_ticket_escalates(env: Env):
     def bad_coder(req):
-        (req.cwd / "src" / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+        (req.cwd / "src" / "calc.py").write_text(bad_calc())
         return "oops"
 
     env.engine().run(1)
@@ -308,7 +323,7 @@ def test_resume_after_escalation_resets_counters(env: Env):
     def coder(req):
         calls.append(1)
         if len(calls) <= 3:
-            (req.cwd / "src" / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+            (req.cwd / "src" / "calc.py").write_text(bad_calc())
         else:
             (req.cwd / "src" / "calc.py").write_text(CALC_MULT)
             (req.cwd / "tests" / "test_mult.py").write_text(TEST_MULT)
@@ -439,7 +454,10 @@ def test_review_findings_go_back_to_the_coder_verbatim(env: Env):
 
     def coder(req):
         prompts.append(req.prompt)
-        return good_coder(req)
+        good_coder(req)
+        if len(prompts) > 1:  # addressing the finding: document the limits
+            (req.cwd / "src" / "calc.py").write_text(CALC_MULT + "# limits documented\n")
+        return "addressed" if len(prompts) > 1 else "built"
 
     env.engine().run(1)
     env.say("alice", "/approve")
@@ -506,7 +524,7 @@ def test_same_tool_review_is_flagged_when_only_one_agent_is_available(env: Env):
 
 def test_repeated_identical_failures_consult_triage_which_can_escalate(tmp_path: Path):
     def bad(req):
-        (req.cwd / "src" / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+        (req.cwd / "src" / "calc.py").write_text(bad_calc())
         return "no"
 
     e = Env(tmp_path, caps=(3, 4))
@@ -522,7 +540,7 @@ def test_repeated_identical_failures_consult_triage_which_can_escalate(tmp_path:
 
 def test_triage_replan_goes_back_to_refining(tmp_path: Path):
     def bad(req):
-        (req.cwd / "src" / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+        (req.cwd / "src" / "calc.py").write_text(bad_calc())
         return "no"
 
     e = Env(tmp_path, caps=(3, 4))
@@ -640,3 +658,105 @@ def test_worktree_helpers_used_by_the_engine(env: Env):
     env.engine().run(1)
     wt = Path(env.ticket().worktree)
     assert wt.is_dir() and worktree.head_sha(wt) == gitops.head_sha(wt)
+
+
+# ---------------------------------------------------------------- bugs found by the live run
+
+
+def test_a_review_with_no_findings_is_sent_back_to_the_reviewer_not_the_coder(env: Env):
+    empty = {"verdict": "request_changes", "findings": [],
+             "integration": {"ran": False, "passed": False, "notes": "no integration run"}}
+    replies = [empty, APPROVE]
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    out = env.engine(reviewer=lambda r: replies.pop(0)).run(1)
+    assert out.ticket.state is State.AWAITING_MERGE_APPROVAL and out.ticket.review_round == 0
+    repair = env.review_agent.calls[1]
+    assert "ONLY the corrected JSON" in repair.prompt and "findings" in repair.prompt
+
+
+def test_repeated_identical_review_findings_consult_triage(tmp_path: Path):
+    e = Env(tmp_path, caps=(4, 4))
+    same = {"verdict": "request_changes", "integration": {"ran": True, "passed": True},
+            "findings": [{"id": "F", "severity": "major", "blocking": True, "file": "src/calc.py",
+                          "summary": "the docstring is wrong"}]}
+    n = itertools.count()
+
+    def coder(req):
+        good_coder(req)
+        (req.cwd / "src" / f"v{next(n)}.py").write_text("# change\n")
+        return "ok"
+
+    triage = FakeAgent({"triage": [{"decision": "escalate", "reason": "reviewer and coder disagree"}]})
+    e.engine().run(1)
+    e.say("alice", "/approve")
+    out = e.engine(coder=coder, reviewer=lambda r: same, triage=triage).run(1)
+    assert out.status == "escalated" and "triage: reviewer and coder disagree" in out.reason
+    assert len(triage.calls) == 1 and out.ticket.review_round == 1
+    e.store.close()
+
+
+def test_a_passing_gate_run_does_not_hide_a_repeating_review_complaint(tmp_path: Path):
+    e = Env(tmp_path, caps=(4, 4))
+    same = {"verdict": "request_changes", "integration": {"ran": True, "passed": True},
+            "findings": [{"id": "F", "severity": "major", "blocking": True, "file": "a",
+                          "summary": "same complaint"}]}
+    n = itertools.count()
+
+    def coder(req):
+        good_coder(req)
+        (req.cwd / "src" / f"w{next(n)}.py").write_text("# change\n")
+        return "ok"
+
+    e.engine().run(1)
+    e.say("alice", "/approve")
+    triage = FakeAgent({"triage": [{"decision": "retry", "reason": "ok", "message_to_coder": "x"}] * 3})
+    e.engine(coder=coder, reviewer=lambda r: same, triage=triage).run(1)
+    assert len(triage.calls) >= 1  # gates passed in between, yet the repeat was still noticed
+    e.store.close()
+
+
+def test_coder_making_no_changes_after_feedback_escalates_with_its_explanation(env: Env):
+    complaint = {"verdict": "request_changes", "integration": {"ran": True, "passed": True},
+                 "findings": [{"id": "F", "severity": "major", "blocking": True, "file": "a",
+                               "summary": "rename it"}]}
+
+    def stubborn(req):
+        if req.session:  # second call, after feedback
+            return "I disagree: the name matches the plan"
+        return good_coder(req)
+
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    out = env.engine(coder=stubborn, reviewer=lambda r: complaint).run(1)
+    assert out.status == "escalated"
+    assert "no changes after feedback" in out.reason and "I disagree" in out.reason
+    assert len(env.review_agent.calls) == 1  # no pointless second review of identical code
+
+
+def test_missing_integration_gate_does_not_block_review_by_default(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    out = env.engine().run(1)
+    assert out.ticket.state is State.AWAITING_MERGE_APPROVAL
+    prompt = env.review_agent.calls[0].prompt
+    assert "Not configured" in prompt and "integration" in prompt
+
+
+def test_require_integration_escalates_before_spending_a_review(tmp_path: Path):
+    e = Env(tmp_path)
+    e.cfg.require_integration = True
+    e.engine().run(1)
+    e.say("alice", "/approve")
+    out = e.engine().run(1)
+    assert out.status == "escalated" and "require_integration" in out.reason
+    assert e.review_agent.calls == []
+    e.store.close()
+
+
+def test_review_artifact_keeps_the_raw_reply_and_notes(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    env.engine().run(1)
+    saved = env.store.stage_results("#1", "review")[-1]["payload"]
+    assert "approve" in saved["reply"] and "notes" in saved

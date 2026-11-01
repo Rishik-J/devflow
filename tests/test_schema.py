@@ -65,3 +65,21 @@ def test_repo_local_schema_overrides_shipped(tmp_path: Path):
 def test_unknown_schema():
     with pytest.raises(schema.SchemaError):
         schema.load_schema("nope")
+
+
+def test_request_changes_needs_a_blocking_finding():
+    base = {"integration": {"ran": True, "passed": True}}
+    none = {**base, "verdict": "request_changes", "findings": []}
+    non_blocking = {**base, "verdict": "request_changes", "findings": [
+        {"id": "1", "severity": "nit", "blocking": False, "file": "a", "summary": "s"}]}
+    blocking = {**base, "verdict": "request_changes", "findings": [
+        {"id": "1", "severity": "major", "blocking": True, "file": "a", "summary": "s"}]}
+    assert schema.errors("review", none) and schema.errors("review", non_blocking)
+    assert schema.errors("review", blocking) == []
+    assert schema.errors("review", {**base, "verdict": "approve", "findings": []}) == []
+
+
+def test_empty_summary_is_rejected():
+    bad = {"verdict": "approve", "integration": {"ran": False, "passed": False},
+           "findings": [{"id": "1", "severity": "nit", "blocking": False, "file": "a", "summary": ""}]}
+    assert schema.errors("review", bad)

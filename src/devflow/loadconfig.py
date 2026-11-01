@@ -63,6 +63,7 @@ class Config:
     routing: RoutingCfg = field(default_factory=RoutingCfg)
     approvers: list[str] = field(default_factory=list)
     notify_command: str = ""
+    require_integration: bool = False
 
 
 def config_path(root: Path) -> Path:
@@ -168,4 +169,5 @@ def load_config(root: Path) -> Config:
         routing=_routing(data),
         approvers=_str_list(data.get("human_gates", {}), "approvers"),
         notify_command=str(data.get("human_gates", {}).get("notify_command", "")),
+        require_integration=bool(data.get("review", {}).get("require_integration", False)),
     )

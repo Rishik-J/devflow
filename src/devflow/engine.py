@@ -336,6 +336,11 @@ class Engine:
             raise _Escalate(str(exc)) from exc
         self._put(t, "implement", {"agent": routed.agent, "switched": routed.switched,
                                    "committed": sha, "summary": routed.result.text[-1500:]})
+        if feedback and sha is None:
+            # Re-running gates and review on identical code cannot change their answer. The
+            # coder may disagree with the feedback; that is a call for a person.
+            raise _Escalate("the coder made no changes after feedback and said: "
+                            + routed.result.text.strip()[-400:])
         self._move(t, State.GATES, routed.agent, "committed" if sha else "no changes")
 
     # ------------------------------------------------------------------ GATES
@@ -384,7 +389,7 @@ class Engine:
             "ok": ok, "summary": verdict.summary(), "unconfigured": verdict.unconfigured,
             "findings": [vars(f) for f in findings]}, ok=ok)
         if ok:
-            t.sessions.pop("last_fail_sig", None)
+            t.sessions.pop("gate_fail_sig", None)
             self.store.save_ticket(t)
             self._move(t, State.IN_REVIEW, "engine", verdict.summary())
             return
@@ -392,22 +397,23 @@ class Engine:
         sig = self._signature([(f.gate, f.new) for f in verdict.new_failures],
                               [(x.kind, x.file) for x in diffguard.blocking(findings)])
         capped = t.implement_attempts + 1 > self.cfg.limits.max_implement_attempts
-        feedback = self._maybe_triage(t, sig, "The same gate failures appeared twice in a row.",
+        feedback = self._maybe_triage(t, "gate_fail_sig", sig,
+                                      "The same gate failures appeared twice in a row.",
                                       feedback, cap_will_end_it=capped) or feedback
         t.sessions["pending_feedback"] = feedback
         self.store.save_ticket(t)
         self._move(t, State.IMPLEMENTING, "engine", "gates failed")
 
     def _maybe_triage(
-        self, t: Ticket, sig: str, situation: str, facts: str, *, cap_will_end_it: bool
+        self, t: Ticket, key: str, sig: str, situation: str, facts: str, *, cap_will_end_it: bool
     ) -> str | None:
         """If this failure repeats the last one, ask the triage agent what to do.
 
         Skipped when the retry cap is about to escalate the ticket anyway: a triage call
         could not change the outcome, only cost a model run.
         """
-        previous = t.sessions.get("last_fail_sig")
-        t.sessions["last_fail_sig"] = sig
+        previous = t.sessions.get(key)
+        t.sessions[key] = sig
         self.store.save_ticket(t)
         if previous != sig or cap_will_end_it:
             return None
@@ -444,6 +450,10 @@ class Engine:
             t.sessions["pr"] = str(pr.number)
             self.store.save_ticket(t)
 
+        if self.cfg.require_integration and not any(
+                p.gates.get("integration") for p in self.cfg.projects):
+            raise _Escalate("review requires an integration gate (require_integration = true) "
+                            "but none is configured. Define one in .devflow/config.toml.")
         head = gitops.head_sha(wt)
         review_wt = worktree.create_detached(
             self.cfg.root, self.cfg.worktree_root / f"{t.branch.split('/', 1)[-1]}-review", head)
@@ -471,25 +481,30 @@ class Engine:
         self._put(t, "review", {"agent": routed.agent, "independent": routed.independent,
                                 "verdict": review["verdict"], "approved": approved,
                                 "findings": review["findings"], "engine_gates_ok": engine_ok,
-                                "facts": facts}, ok=approved)
+                                "facts": facts, "notes": review["integration"].get("notes", ""),
+                                "reply": routed.result.text[-3000:]}, ok=approved)
         self._say(t, self._format_review(review, routed.agent, routed.independent, facts, approved),
                   number=self._pr_number(t))
 
         if approved:
-            t.sessions.pop("last_fail_sig", None)
+            t.sessions.pop("review_fail_sig", None)
             self.store.save_ticket(t)
             self.notifier.send(f"#{t.issue} ({t.title}): reviewed and ready to merge.")
             self._move(t, State.AWAITING_MERGE_APPROVAL, routed.agent, "approved")
             return
+        if not blocking:
+            # The schema normally prevents this; a repo-local schema could loosen it.
+            raise _Escalate("the reviewer requested changes without any blocking finding: "
+                            + review["integration"].get("notes", "")[:300])
         feedback = "\n\n".join(
             f"[{f.get('severity')}] {f.get('file')}{':' + str(f['line']) if f.get('line') else ''} "
             f"- {f.get('summary')}" + (f"\nSuggested: {f['suggested_fix']}" if f.get("suggested_fix") else "")
             for f in blocking) or "The reviewer requested changes without blocking findings."
         sig = self._signature(sorted(f.get("summary", "") for f in blocking))
         capped = t.review_round + 1 > self.cfg.limits.max_review_rounds
-        feedback = self._maybe_triage(t, sig, "The reviewer raised the same blocking findings "
-                                              "twice in a row.", feedback,
-                                      cap_will_end_it=capped) or feedback
+        feedback = self._maybe_triage(t, "review_fail_sig", sig,
+                                      "The reviewer raised the same blocking findings twice "
+                                      "in a row.", feedback, cap_will_end_it=capped) or feedback
         t.sessions["pending_feedback"] = feedback
         self.store.save_ticket(t)
         self._move(t, State.CHANGES_REQUESTED, routed.agent, f"{len(blocking)} blocking finding(s)")
@@ -566,7 +581,8 @@ class Engine:
             raise _Wait("escalated; waiting for /resume on the issue")
         self._consume(t, cmds[0])
         t.review_round, t.implement_attempts = 0, 0
-        t.sessions.pop("last_fail_sig", None)
+        t.sessions.pop("gate_fail_sig", None)
+        t.sessions.pop("review_fail_sig", None)
         self.store.save_ticket(t)
         back = State.IMPLEMENTING if self._latest(t, "test_plan") else State.REFINING
         self._move(t, back, f"human:{cmds[0].author}", "resumed")

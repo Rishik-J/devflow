@@ -104,3 +104,13 @@ def test_node_repo(node_repo: Path):
 def test_not_a_git_repo_errors(tmp_path: Path):
     with pytest.raises(InitError):
         init(tmp_path)
+
+
+def test_generated_reviewer_prompt_no_longer_demands_an_integration_run(py_repo: Path):
+    init(py_repo)
+    text = (py_repo / ".devflow/prompts/reviewer.md").read_text()
+    assert "Approve only when there are no blocking findings and the integration run passed" not in text
+    assert "not configured" in text and "Never request changes without one" in text
+    cfg = tomllib.loads((py_repo / ".devflow/config.toml").read_text())
+    assert cfg["review"] == {"require_integration": False}
+    assert cfg["agents"]["planner"] == "openclaw:devflow"

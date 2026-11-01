@@ -15,7 +15,9 @@ plan, writing code, reviewing it, and triaging feedback. See [DESIGN.md](DESIGN.
 | Code graph kept fresh on every edit + agent context (`devflow graph ...`) | done, not yet wired into agents |
 | Agent drivers: Claude Code, Codex, OpenClaw verified live; Cursor written, needs `agent login` to verify | done |
 | Usage-based routing of coding work across claude / codex / cursor (`devflow agents`) | done |
-| Stages, engine, GitHub Projects, learning loop, `devflow run` | not built yet (see plan) |
+| Single-ticket pipeline: refine, test design, implement, gates, review, merge (`devflow ticket N`) | done; verified live with real agents on a scratch repo |
+| Gates judged against the base commit (pre-existing failures do not block tickets) | done |
+| GitHub Projects board, scheduler, ticket creation, learning loop, `devflow run` | not built yet (see plan) |
 
 ## Install
 
@@ -64,6 +66,23 @@ engine calls `ensure_fresh` before each agent starts and after each round of edi
 incremental rebuild takes about a second and uses no LLM. A new worktree has no graph, so the
 first call there builds it. Agents get the digest (`agent_preamble`) and the graphify tools
 (`mcp_config` for Claude, `codex_overrides` for Codex) from `graphctx.py`.
+
+## Running a ticket
+
+```bash
+devflow setup-openclaw           # once: creates the OpenClaw agent used for planning and triage
+devflow init                     # once per repo
+devflow ticket 12 --dry-run      # reads the issue, logs what it would write to GitHub
+devflow ticket 12 --watch 30     # work the issue; poll for your comments every 30s
+devflow tickets                  # where every ticket stands
+```
+
+It stops whenever it needs you, and you answer with a comment on the issue (or the PR for merge):
+`/approve`, `/reject <why>`, `/answer <text>`, `/resume`. Only logins in `approvers` count
+(default: the `gh` user), and each comment is used once. Plan and merge approval can be switched
+off in `[human_gates]`. Failures from before the ticket (a linter nobody enforces) are ignored;
+only new ones are blamed on it. The reviewer never repeats the gates: the engine runs them in a
+clean checkout and hands over the results as facts.
 
 ## Coding agents and routing
 
