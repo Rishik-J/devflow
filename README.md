@@ -87,8 +87,10 @@ clean checkout and hands over the results as facts.
 
 ## The board
 
-Add a GitHub Project with a Status field (Backlog, Ready, In progress, In review, Done), run
-`gh auth refresh -s project` once, and set this in `.devflow/config.toml`:
+Run `gh auth refresh -h github.com -s project` once, then `devflow board-create`. It makes a
+private Project with the five Status options and a Priority field (P0-P3), links it to the repo,
+and writes the config for you. To use a Project you already have, set this in
+`.devflow/config.toml` instead (its Status field needs the same five options):
 
 ```toml
 [github]

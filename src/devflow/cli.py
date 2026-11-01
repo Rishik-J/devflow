@@ -137,6 +137,37 @@ def _ticket(args: argparse.Namespace) -> int:
     return {"done": 0, "paused": 0, "escalated": 3}.get(outcome.status, 1)
 
 
+def _board_create(args: argparse.Namespace) -> int:
+    from . import board_setup
+    from .board import BoardError
+    from .detect import repo_root
+    from .host import repo_slug
+    from .loadconfig import ConfigError, load_config
+
+    root = repo_root(Path(args.path).resolve())
+    if root is None:
+        print("error: not inside a git repository", file=sys.stderr)
+        return 2
+    try:
+        cfg = load_config(root)
+        if cfg.board.enabled:
+            print(f"error: this repo already uses project #{cfg.board.project}", file=sys.stderr)
+            return 2
+        slug = repo_slug(cfg.remote)
+        owner = args.owner or slug.split("/")[0]
+        title = args.title or f"{cfg.name}: devflow queue"
+        made = board_setup.create_project(owner, title, slug)
+        board_setup.write_config(root, made.number, owner)
+    except (ConfigError, BoardError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"created project #{made.number}: {made.url}")
+    print("statuses: " + ", ".join(board_setup.required_statuses()) + "; priority: P0-P3")
+    print(f"linked to {slug} and written to .devflow/config.toml")
+    print("next: give an issue the 'devflow' label, move it to Ready, run `devflow board`")
+    return 0
+
+
 def _board(args: argparse.Namespace) -> int:
     from .board import BoardError, DryRunBoard
     from .detect import repo_root
@@ -264,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     p_board.add_argument("path", nargs="?", default=".")
     p_board.add_argument("--dry-run", action="store_true")
     p_board.set_defaults(func=_board)
+
+    p_create = sub.add_parser("board-create", help="create and link this repo's GitHub Project")
+    p_create.add_argument("--title", help="Project title (default: '<repo>: devflow queue')")
+    p_create.add_argument("--owner", help="user or org that will own it (default: the repo owner)")
+    p_create.add_argument("path", nargs="?", default=".")
+    p_create.set_defaults(func=_board_create)
 
     p_tickets = sub.add_parser("tickets", help="list tickets devflow is working on")
     p_tickets.add_argument("path", nargs="?", default=".")
