@@ -167,3 +167,26 @@ def test_pending_filters_by_author_consumption_kind_and_orders_oldest_first():
     assert [(x.kind, x.comment_id) for x in got] == [("answer", 1), ("approve", 3)]
     only = commands.pending(comments, {"alice"}, set(), kinds=("approve",))
     assert [x.comment_id for x in only] == [3, 4]
+
+
+def test_create_issue_sends_labels_and_body_on_stdin():
+    view = json.dumps({"number": 41, "title": "T", "body": "B", "labels": [{"name": "devflow"}],
+                       "state": "OPEN", "author": {"login": "me"}})
+    gh = Gh("https://github.com/a/b/issues/41\n", view)
+    issue = GhHost("a/b", gh).create_issue("T", "B with `ticks`", ["devflow", "devflow:discovered"])
+    cmd, stdin = gh.calls[0]
+    assert cmd[:3] == ["gh", "issue", "create"] and cmd.count("--label") == 2 and "-R" in cmd
+    assert stdin == "B with `ticks`" and "ticks" not in " ".join(cmd)  # body travels on stdin
+    assert issue.number == 41
+
+
+def test_list_open_issues_and_ensure_label():
+    listing = json.dumps([{"number": 3, "title": "A", "body": None, "labels": [{"name": "x"}],
+                           "state": "OPEN", "author": None}])
+    gh = Gh(listing, "")
+    issues = GhHost("a/b", gh).list_open_issues("devflow")
+    assert issues[0].number == 3 and issues[0].body == "" and issues[0].labels == ["x"]
+    assert "--label" in gh.calls[0][0] and "devflow" in gh.calls[0][0]
+    GhHost("a/b", gh).ensure_label("devflow", "0e8a16", "desc")
+    label_cmd = gh.calls[-1][0]
+    assert label_cmd[1:3] == ["label", "create"] and "--force" in label_cmd

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .agents import make_agent
+from .board import Board, DryRunBoard, GhBoard
 from .engine import Engine
 from .host import DryRunHost, GhHost, Host, repo_slug
 from .loadconfig import Config, load_config
@@ -21,6 +22,7 @@ def build_engine(
     *,
     dry_run: bool = False,
     host: Host | None = None,
+    board: Board | None = None,
     log: Callable[[str], None] = lambda message: None,
 ) -> tuple[Engine, Store, Config]:
     """Load config and wire up the store, host, router, agents and notifier.
@@ -30,9 +32,21 @@ def build_engine(
     cfg = load_config(root)
     store = Store(state_db_path(root))
     real: Host = host or GhHost(repo_slug(cfg.remote))
+    queue = board or make_board(cfg)
+    if queue is not None and dry_run:
+        queue = DryRunBoard(queue)
     agents = {role: make_agent(cfg.agents[role]) for role in ENGINE_ROLES if role in cfg.agents}
     engine = Engine(
         cfg, store, DryRunHost(real) if dry_run else real, build_router(cfg, store), agents,
-        make_notifier(cfg.notify_command), dry_run=dry_run, log=log,
+        make_notifier(cfg.notify_command), board=queue, dry_run=dry_run, log=log,
     )
     return engine, store, cfg
+
+
+def make_board(cfg: Config) -> Board | None:
+    """The configured GitHub Project, or None when [github] project is not set."""
+    if not cfg.board.enabled:
+        return None
+    slug = repo_slug(cfg.remote)
+    return GhBoard(slug, cfg.board.owner or slug.split("/")[0], cfg.board.project,
+                   priority_field=cfg.board.priority_field)

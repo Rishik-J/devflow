@@ -17,7 +17,8 @@ plan, writing code, reviewing it, and triaging feedback. See [DESIGN.md](DESIGN.
 | Usage-based routing of coding work across claude / codex / cursor (`devflow agents`) | done |
 | Single-ticket pipeline: refine, test design, implement, gates, review, merge (`devflow ticket N`) | done; verified live with real agents on a scratch repo |
 | Gates judged against the base commit (pre-existing failures do not block tickets) | done |
-| GitHub Projects board, scheduler, ticket creation, learning loop, `devflow run` | not built yet (see plan) |
+| GitHub Projects board, scheduler, follow-up tickets (`devflow board`) | built and tested against recorded `gh` output; not yet run against a live Project |
+| Learning loop, `devflow run` | not built yet (see plan) |
 
 ## Install
 
@@ -83,6 +84,24 @@ It stops whenever it needs you, and you answer with a comment on the issue (or t
 off in `[human_gates]`. Failures from before the ticket (a linter nobody enforces) are ignored;
 only new ones are blamed on it. The reviewer never repeats the gates: the engine runs them in a
 clean checkout and hands over the results as facts.
+
+## The board
+
+Add a GitHub Project with a Status field (Backlog, Ready, In progress, In review, Done), run
+`gh auth refresh -s project` once, and set this in `.devflow/config.toml`:
+
+```toml
+[github]
+project = 3
+owner = "your-login"
+```
+
+You move a ticket to **Ready** (and give it the `devflow` label); devflow works it, moves it
+through In progress and In review to Done, and reads `Priority` (P0 before P1) and
+`Blocked by #N` in the issue body to choose the order. Work it needs doing that it noticed
+(the planner's `follow_ups` and the reviewer's non-blocking major or minor findings) is filed as
+new issues in **Backlog**, never Ready, at most three per ticket, skipping near-duplicates of
+open issues. `devflow board` shows the queue and what would run next; `--dry-run` is read-only.
 
 ## Coding agents and routing
 

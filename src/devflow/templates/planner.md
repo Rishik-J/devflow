@@ -19,7 +19,9 @@ $gates_summary
 3. Otherwise return `status: ready` with: the goal, numbered acceptance criteria (each one
    observable and testable), ordered steps with the files each touches, what is out of scope,
    and risks.
-4. Keep the scope to the ticket. Note adjacent problems under `risks`; do not fold them in.
+4. Keep the scope to the ticket. Do not fold adjacent problems into the plan: list real ones
+   under `follow_ups` (a short title and why it matters) and they become separate backlog
+   tickets. Only list problems you actually saw in the code, not speculation.
 
 ## Output
 JSON only, matching `.devflow/schemas/plan.schema.json`.

@@ -137,6 +137,47 @@ def _ticket(args: argparse.Namespace) -> int:
     return {"done": 0, "paused": 0, "escalated": 3}.get(outcome.status, 1)
 
 
+def _board(args: argparse.Namespace) -> int:
+    from .board import BoardError, DryRunBoard
+    from .detect import repo_root
+    from .host import GhHost, HostError, repo_slug
+    from .loadconfig import ConfigError, load_config
+    from .runtime import make_board
+    from .scheduler import select
+    from .store import Store, state_db_path
+
+    root = repo_root(Path(args.path).resolve())
+    if root is None:
+        print("error: not inside a git repository", file=sys.stderr)
+        return 2
+    try:
+        cfg = load_config(root)
+        board = make_board(cfg)
+        if board is None:
+            print("no board configured: set [github] project = N in .devflow/config.toml",
+                  file=sys.stderr)
+            return 2
+        host = GhHost(repo_slug(cfg.remote))
+        with Store(state_db_path(root)) as store:
+            sel = select(DryRunBoard(board) if args.dry_run else board, host, store, cfg.board)
+    except (ConfigError, BoardError, HostError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"board: project #{cfg.board.project}, label {cfg.board.label!r}, "
+          f"max_active {cfg.board.max_active}")
+    print(f"working now: {sel.working}" + (f" ({', '.join('#' + str(n) for n in sel.resume)})"
+                                           if sel.resume else ""))
+    print("ready, in the order they would run:")
+    for item in sel.ready:
+        print(f"  #{item.issue:<5} {item.priority or '-':<4} {item.title}")
+    if not sel.ready:
+        print("  (none)")
+    for number, why in sel.skipped:
+        print(f"  skipped #{number}: {why}")
+    print(f"next: {'#' + str(sel.pick.issue) if sel.pick else 'nothing'} - {sel.reason}")
+    return 0
+
+
 def _tickets(args: argparse.Namespace) -> int:
     from .detect import repo_root
     from .store import Store, state_db_path
@@ -218,6 +259,11 @@ def main(argv: list[str] | None = None) -> int:
     p_ticket.add_argument("--watch", type=int, default=0, metavar="SECONDS",
                           help="keep polling for your /approve etc. every N seconds")
     p_ticket.set_defaults(func=_ticket)
+
+    p_board = sub.add_parser("board", help="show the GitHub Project queue and what runs next")
+    p_board.add_argument("path", nargs="?", default=".")
+    p_board.add_argument("--dry-run", action="store_true")
+    p_board.set_defaults(func=_board)
 
     p_tickets = sub.add_parser("tickets", help="list tickets devflow is working on")
     p_tickets.add_argument("path", nargs="?", default=".")

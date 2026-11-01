@@ -41,6 +41,16 @@
       }
     },
     "out_of_scope": { "type": "array", "items": { "type": "string" } },
+    "follow_ups": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["title", "why"],
+        "properties": { "title": { "type": "string", "minLength": 1 },
+                        "why": { "type": "string", "minLength": 1 } }
+      }
+    },
     "risks": { "type": "array", "items": { "type": "string" } }
   },
   "allOf": [

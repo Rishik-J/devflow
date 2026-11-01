@@ -46,6 +46,29 @@ class RoutingCfg:
     agents: dict[str, AgentBudget] = field(default_factory=dict)
 
 
+DEFAULT_STATUSES = {
+    "backlog": "Backlog", "ready": "Ready", "in_progress": "In progress",
+    "in_review": "In review", "done": "Done",
+}
+
+
+@dataclass
+class BoardCfg:
+    """The GitHub Project that holds the ticket queue. project = 0 means no board."""
+
+    project: int = 0
+    owner: str = ""
+    label: str = "devflow"
+    priority_field: str = "Priority"
+    followups_per_ticket: int = 3
+    max_active: int = 1
+    statuses: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_STATUSES))
+
+    @property
+    def enabled(self) -> bool:
+        return self.project > 0
+
+
 @dataclass
 class Config:
     root: Path
@@ -64,6 +87,7 @@ class Config:
     approvers: list[str] = field(default_factory=list)
     notify_command: str = ""
     require_integration: bool = False
+    board: BoardCfg = field(default_factory=BoardCfg)
 
 
 def config_path(root: Path) -> Path:
@@ -118,6 +142,29 @@ def _routing(data: dict) -> RoutingCfg:
     )
 
 
+def _board(data: dict) -> BoardCfg:
+    section = data.get("github", {})
+    statuses = dict(DEFAULT_STATUSES)
+    custom = section.get("statuses", {})
+    if not isinstance(custom, dict):
+        raise ConfigError("[github.statuses] must be a table")
+    unknown = set(custom) - set(DEFAULT_STATUSES)
+    if unknown:
+        raise ConfigError(f"[github.statuses] unknown keys {sorted(unknown)}; "
+                          f"use {sorted(DEFAULT_STATUSES)}")
+    statuses.update({k: str(v) for k, v in custom.items()})
+    where = "[github]"
+    return BoardCfg(
+        project=int(_number(section, "project", 0, where)),
+        owner=str(section.get("owner", "")),
+        label=str(section.get("label", "devflow")),
+        priority_field=str(section.get("priority_field", "Priority")),
+        followups_per_ticket=int(_number(section, "followups_per_ticket", 3, where)),
+        max_active=int(_number(section, "max_active", 1, where, minimum=1)),
+        statuses=statuses,
+    )
+
+
 def load_config(root: Path) -> Config:
     path = config_path(root)
     if not path.exists():
@@ -165,9 +212,11 @@ def load_config(root: Path) -> Config:
                      if isinstance(v, bool)},
         agents={k: str(v) for k, v in data.get("agents", {}).items()},
         projects=projects,
-        github={k: str(v) for k, v in data.get("github", {}).items()},
+        github={k: str(v) for k, v in data.get("github", {}).items()
+                if not isinstance(v, dict)},
         routing=_routing(data),
         approvers=_str_list(data.get("human_gates", {}), "approvers"),
         notify_command=str(data.get("human_gates", {}).get("notify_command", "")),
         require_integration=bool(data.get("review", {}).get("require_integration", False)),
+        board=_board(data),
     )

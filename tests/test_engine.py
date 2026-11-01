@@ -760,3 +760,91 @@ def test_review_artifact_keeps_the_raw_reply_and_notes(env: Env):
     env.engine().run(1)
     saved = env.store.stage_results("#1", "review")[-1]["payload"]
     assert "approve" in saved["reply"] and "notes" in saved
+
+
+# ---------------------------------------------------------------- the board and follow-ups
+
+
+def test_board_status_follows_the_ticket_through_its_states(env: Env):
+    from devflow.board import FakeBoard
+
+    board = FakeBoard()
+    board.put(1, "Ready", title="Add multiply")
+    env.engine(board=board).run(1)
+    assert board.status_of(1) == "In progress"
+    env.say("alice", "/approve")
+    env.engine(board=board).run(1)
+    assert board.status_of(1) == "In review"
+    env.say("alice", "/approve", number=env.pr())
+    env.engine(board=board).run(1)
+    assert board.status_of(1) == "Done"
+    assert [s for _, s in board.history] == ["In progress", "In review", "Done"]  # no redundant writes
+
+
+def test_escalated_ticket_stays_visibly_in_progress(env: Env):
+    from devflow.board import FakeBoard
+
+    board = FakeBoard()
+    board.put(1, "Ready")
+    env.engine(board=board).run(1)
+    env.say("alice", "/approve")
+    out = env.engine(board=board, coder=lambda req: "did nothing", triage=retry_triage()).run(1)
+    assert out.status == "escalated" and board.status_of(1) == "In progress"
+
+
+def test_a_board_failure_never_fails_the_ticket(env: Env):
+    from devflow.board import FakeBoard
+
+    empty = FakeBoard()  # issue 1 is not on this board
+    out = env.engine(board=empty).run(1)
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
+    errors = env.store.events("#1", "board_error")
+    assert errors and "not on the project" in errors[0]["error"]
+
+
+def test_followups_are_filed_in_backlog_after_the_merge(env: Env):
+    from devflow.board import FakeBoard
+
+    plan = {**PLAN, "follow_ups": [{"title": "Document the numeric limits", "why": "Callers guess."}]}
+    review = {"verdict": "approve", "integration": {"ran": True, "passed": True}, "findings": [
+        {"id": "m", "severity": "minor", "blocking": False, "file": "src/calc.py",
+         "summary": "multiply has no overflow note"},
+        {"id": "n", "severity": "nit", "blocking": False, "file": "src/calc.py", "summary": "spacing"}]}
+    board = FakeBoard()
+    board.put(1, "Ready")
+    planner = FakeAgent({"planner": [plan]})
+    kw = {"board": board, "planner": planner, "reviewer": lambda r: review}
+    env.engine(**kw).run(1)
+    env.say("alice", "/approve")
+    env.engine(**kw).run(1)
+    env.say("alice", "/approve", number=env.pr())
+    out = env.engine(**kw).run(1)
+    assert out.ticket.state is State.MERGED
+    new = [i for n, i in env.host.issues.items() if n != 1]
+    assert [i.title for i in new] == ["Document the numeric limits", "multiply has no overflow note"]
+    assert all(i.labels == ["devflow", "devflow:discovered"] for i in new)
+    assert all(board.status_of(i.number) == "Backlog" for i in new)  # never Ready
+    final = env.host.comments(1)[-1].body
+    assert "Filed in Backlog" in final and f"#{new[0].number}" in final
+    assert "spacing" not in final
+
+
+def test_followup_failures_do_not_undo_a_merge(env: Env):
+    plan = {**PLAN, "follow_ups": [{"title": "Something", "why": "Because"}]}
+
+    class BrokenHost(FakeHost):
+        def create_issue(self, title, body, labels):
+            from devflow.host import HostError
+            raise HostError("rate limited")
+
+    host = BrokenHost()
+    host.add_issue(1, "Add multiply", "x")
+    env.host = host
+    planner = FakeAgent({"planner": [plan]})
+    env.engine(planner=planner).run(1)
+    env.say("alice", "/approve")
+    env.engine(planner=planner).run(1)
+    env.say("alice", "/approve", number=env.pr())
+    out = env.engine(planner=planner).run(1)
+    assert out.ticket.state is State.MERGED and host.merged
+    assert env.store.events("#1", "followup_error")

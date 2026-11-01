@@ -60,6 +60,9 @@ class Host(Protocol):
     def get_pr(self, number: int) -> PullRequest: ...
     def checks(self, pr_number: int) -> str: ...  # success | failure | pending | none
     def merge_pr(self, pr_number: int) -> None: ...
+    def create_issue(self, title: str, body: str, labels: list[str]) -> Issue: ...
+    def list_open_issues(self, label: str | None = None) -> list[Issue]: ...
+    def ensure_label(self, name: str, color: str = "ededed", description: str = "") -> None: ...
 
 
 def upsert_status(host: Host, number: int, body: str) -> int:
@@ -180,6 +183,29 @@ class GhHost:
     def merge_pr(self, pr_number: int) -> None:
         self._gh("pr", "merge", str(pr_number), "-R", self.slug, "--squash")
 
+    def create_issue(self, title: str, body: str, labels: list[str]) -> Issue:
+        args = ["issue", "create", "-R", self.slug, "--title", title, "--body-file", "-"]
+        for label in labels:
+            args += ["--label", label]
+        url = self._gh(*args, input_text=body).strip().splitlines()[-1]
+        return self.get_issue(int(url.rstrip("/").rsplit("/", 1)[1]))
+
+    def list_open_issues(self, label: str | None = None) -> list[Issue]:
+        args = ["issue", "list", "-R", self.slug, "--state", "open", "--limit", "200",
+                "--json", "number,title,body,labels,state,author"]
+        if label:
+            args += ["--label", label]
+        return [
+            Issue(number=raw["number"], title=raw["title"], body=raw.get("body") or "",
+                  labels=[lb["name"] for lb in raw.get("labels", [])], state="open",
+                  author=(raw.get("author") or {}).get("login", ""))
+            for raw in json.loads(self._gh(*args) or "[]")
+        ]
+
+    def ensure_label(self, name: str, color: str = "ededed", description: str = "") -> None:
+        self._gh("label", "create", name, "-R", self.slug, "--color", color,
+                 "--description", description, "--force")
+
 
 class DryRunHost:
     """Reads from a real host, but logs every write instead of performing it."""
@@ -218,6 +244,16 @@ class DryRunHost:
 
     def merge_pr(self, pr_number: int) -> None:
         self.writes.append(f"merge PR #{pr_number}")
+
+    def create_issue(self, title: str, body: str, labels: list[str]) -> Issue:
+        self.writes.append(f"create issue {title!r} labels={labels}")
+        return Issue(0, title, body, list(labels))
+
+    def list_open_issues(self, label: str | None = None) -> list[Issue]:
+        return self.inner.list_open_issues(label)
+
+    def ensure_label(self, name: str, color: str = "ededed", description: str = "") -> None:
+        self.writes.append(f"ensure label {name!r}")
 
 
 class FakeHost:
@@ -285,3 +321,15 @@ class FakeHost:
     def merge_pr(self, pr_number: int) -> None:
         self.prs[pr_number].state = "merged"
         self.merged.append(pr_number)
+
+    def create_issue(self, title: str, body: str, labels: list[str]) -> Issue:
+        number = max([99, *self.issues]) + 1
+        self.issues[number] = Issue(number, title, body, list(labels))
+        return self.issues[number]
+
+    def list_open_issues(self, label: str | None = None) -> list[Issue]:
+        return [i for i in self.issues.values()
+                if i.state == "open" and (label is None or label in i.labels)]
+
+    def ensure_label(self, name: str, color: str = "ededed", description: str = "") -> None:
+        self.labels = getattr(self, "labels", set()) | {name}

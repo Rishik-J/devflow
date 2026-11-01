@@ -20,8 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import baseline, commands, diffguard, gitops, graphctx, prompts, worktree
+from . import baseline, commands, diffguard, followups, gitops, graphctx, prompts, worktree
 from .agents import Agent, AgentError, AgentRequest, AgentResult, run_structured
+from .board import Board, BoardError, status_for
 from .gates import GateReport, run_gates, setup_worktree
 from .graphify import build_graph
 from .host import Host, HostError, upsert_status
@@ -62,6 +63,7 @@ class Engine:
         notifier: Notifier | None = None,
         *,
         graph_builder: Callable = build_graph,
+        board: Board | None = None,
         dry_run: bool = False,
         log: Callable[[str], None] = lambda message: None,
         max_steps: int = 60,
@@ -71,6 +73,7 @@ class Engine:
         self.notifier = notifier or NullNotifier()
         self.graph_builder, self.dry_run, self.log, self.max_steps = (
             graph_builder, dry_run, log, max_steps)
+        self.board = board
         self._handlers: dict[State, Callable[[Ticket], None]] = {
             State.NEW: self._new,
             State.REFINING: self._refining,
@@ -126,6 +129,22 @@ class Engine:
     def _move(self, ticket: Ticket, to: State, actor: str, reason: str = "") -> None:
         self.log(f"{ticket.id}: {ticket.state.value} -> {to.value} ({actor}) {reason}".strip())
         self.store.transition(ticket, to, actor=actor, reason=reason, limits=self.cfg.limits)
+        self._sync_board(ticket)
+
+    def _sync_board(self, ticket: Ticket) -> None:
+        """Mirror the ticket's state onto the board. A board problem never fails the ticket."""
+        if self.board is None or ticket.issue is None:
+            return
+        want = status_for(ticket.state, self.cfg.board.statuses)
+        if ticket.sessions.get("board_status") == want:
+            return
+        try:
+            self.board.set_status(ticket.issue, want)
+            ticket.sessions["board_status"] = want
+            self.store.save_ticket(ticket)
+        except BoardError as exc:
+            self.store.add_event(ticket.id, "board_error", {"error": str(exc), "wanted": want})
+            self.log(f"{ticket.id}: could not set board status to {want!r}: {exc}")
 
     def _escalate(self, ticket: Ticket, reason: str) -> None:
         if ticket.state is not State.ESCALATED:
@@ -565,6 +584,7 @@ class Engine:
     def _finish(self, t: Ticket) -> None:
         self._move(t, State.MERGED, "engine", "merged")
         text = f"#{t.issue} ({t.title}) was merged."
+        text += self._file_followups(t)
         self._say(t, text)
         self.notifier.send(text)
         if not self.dry_run:
@@ -572,6 +592,23 @@ class Engine:
             review = self.cfg.worktree_root / f"{t.branch.split('/', 1)[-1]}-review"
             if review.exists():
                 worktree.remove(self.cfg.root, review)
+
+    def _file_followups(self, t: Ticket) -> str:
+        """Turn what the ticket uncovered into Backlog tickets. Returns text for the comment."""
+        try:
+            found = followups.collect(self._latest(t, "plan"), self._latest(t, "review"))
+            if not found:
+                return ""
+            report = followups.file_followups(self.host, self.board, self.store,
+                                              self.cfg.board, t, found)
+        except (HostError, BoardError) as exc:
+            self.store.add_event(t.id, "followup_error", {"error": str(exc)})
+            self.log(f"{t.id}: could not file follow-ups: {exc}")
+            return ""
+        if not report.filed:
+            return ""
+        lines = "\n".join(f"- #{f.issue.number} {f.candidate.title}" for f in report.filed)
+        return ("\n\nFiled in Backlog (move to Ready to work them):\n" + lines)
 
     # ------------------------------------------------------------------ escalation
 
