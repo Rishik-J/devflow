@@ -1,11 +1,8 @@
 """Cursor Agent driver: `agent -p --output-format json`, with chat resume.
 
-NOT YET VERIFIED LIVE: the CLI needs `agent login` (interactive) before it will answer, so this
-driver follows the documented headless interface and parses the result defensively. Run
-`DEVFLOW_LIVE=1 pytest tests/test_live_agents.py -k cursor` after logging in to confirm it.
-
-Read-only runs use `--mode ask` (no edits, no commands). Write runs use `--force` inside
-`--sandbox enabled`. Cursor reads MCP servers from the project, so the graphify MCP server is
+Verified live (see tests/test_live_agents.py). Headless runs refuse an untrusted directory, so
+every run passes `--trust`: the directories are worktrees devflow created itself. Read-only runs
+use `--mode ask` (no edits, no commands). Write runs use `--force` inside `--sandbox enabled`. Cursor reads MCP servers from the project, so the graphify MCP server is
 not injected here (that would mean writing files into the ticket worktree); the graph digest in
 the prompt and the `graphify` CLI cover it.
 """
@@ -64,7 +61,7 @@ class CursorAgent:
         return ok, why
 
     def build(self, req: AgentRequest) -> list[str]:
-        cmd = [self.binary, "-p", "--output-format", "json"]
+        cmd = [self.binary, "-p", "--trust", "--output-format", "json"]
         if req.read_only:
             cmd += ["--mode", "ask"]
         else:
@@ -105,5 +102,16 @@ class CursorAgent:
             duration_s=(data.get("duration_ms") or 0) / 1000,
             ok=ok,
             error=error,
-            raw={k: data[k] for k in ("usage", "request_id", "subtype") if k in data},
+            raw={"usage": _usage(data.get("usage")),
+                 **{k: data[k] for k in ("request_id", "subtype") if k in data}},
         )
+
+
+def _usage(usage: object) -> dict[str, int]:
+    """Cursor reports camelCase token counts; the router reads input_tokens/output_tokens."""
+    if not isinstance(usage, dict):
+        return {}
+    return {
+        "input_tokens": int(usage.get("inputTokens", usage.get("input_tokens", 0)) or 0),
+        "output_tokens": int(usage.get("outputTokens", usage.get("output_tokens", 0)) or 0),
+    }

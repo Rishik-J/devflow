@@ -281,7 +281,7 @@ def test_cursor_read_only_command(tmp_path: Path):
     out = CursorAgent("agent", runner=r).run(req(tmp_path, role="reviewer", system="Be strict.",
                                                  model="sonnet-4"))
     cmd = r.calls[0]["cmd"]
-    assert cmd[:4] == ["agent", "-p", "--output-format", "json"]
+    assert cmd[:5] == ["agent", "-p", "--trust", "--output-format", "json"]
     assert cmd[cmd.index("--mode") + 1] == "ask" and "--force" not in cmd
     assert cmd[cmd.index("--model") + 1] == "sonnet-4"
     assert cmd[-1].startswith("Be strict.") and cmd[-1].endswith("work")
@@ -336,3 +336,14 @@ def test_build_router_uses_configured_agents(tmp_path: Path):
     with Store(state_db_path(repo)) as store:
         router = build_router(cfg, store)
         assert list(router.agents) == ["claude", "codex", "cursor"]
+
+
+def test_cursor_usage_is_normalised_for_the_router(tmp_path: Path):
+    body = json.dumps({"subtype": "success", "is_error": False, "result": "x", "session_id": "c",
+                       "usage": {"inputTokens": 8222, "outputTokens": 94, "cacheReadTokens": 1}})
+    out = CursorAgent("agent", runner=Recorder(ProcResult(0, body, ""))).run(req(tmp_path))
+    assert out.raw["usage"] == {"input_tokens": 8222, "output_tokens": 94}
+    router, *_ = make_router(tmp_path, {"cursor": FakeAgent(name="cursor")},
+                             budgets={"cursor": AgentBudget(usd_per_mtok_in=3, usd_per_mtok_out=15)})
+    cost, tin, tout = router.estimate_cost("cursor", out, 0)
+    assert (tin, tout) == (8222, 94) and cost == pytest.approx(8222 / 1e6 * 3 + 94 / 1e6 * 15)

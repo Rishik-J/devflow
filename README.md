@@ -13,7 +13,7 @@ plan, writing code, reviewing it, and triaging feedback. See [DESIGN.md](DESIGN.
 | Ticket state machine with retry caps | done |
 | Foundations: SQLite store, config loader, schema validation, worktrees, env setup, gate runner, diff guard | done |
 | Code graph kept fresh on every edit + agent context (`devflow graph ...`) | done, not yet wired into agents |
-| Agent drivers: Claude Code, Codex, OpenClaw verified live; Cursor written, needs `agent login` to verify | done |
+| Agent drivers: Claude Code, Codex, Cursor and OpenClaw, all verified live | done |
 | Usage-based routing of coding work across claude / codex / cursor (`devflow agents`) | done |
 | Single-ticket pipeline: refine, test design, implement, gates, review, merge (`devflow ticket N`) | done; verified live with real agents on a scratch repo |
 | Gates judged against the base commit (pre-existing failures do not block tickets) | done |
