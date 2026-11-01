@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review",
+  "type": "object",
+  "required": ["verdict", "findings", "integration"],
+  "properties": {
+    "verdict": { "enum": ["approve", "request_changes"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "blocking", "file", "summary"],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "enum": ["blocker", "major", "minor", "nit"] },
+          "blocking": { "type": "boolean" },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "summary": { "type": "string" },
+          "suggested_fix": { "type": "string" }
+        }
+      }
+    },
+    "integration": {
+      "type": "object",
+      "required": ["ran", "passed"],
+      "properties": {
+        "ran": { "type": "boolean" },
+        "commands": { "type": "array", "items": { "type": "string" } },
+        "passed": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

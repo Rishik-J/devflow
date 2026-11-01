@@ -1,0 +1,87 @@
+from pathlib import Path
+
+import pytest
+
+from devflow.states import LimitExceeded, Limits, State, Ticket, TransitionError
+from devflow.store import Store, state_db_path
+
+
+@pytest.fixture
+def store(tmp_path: Path):
+    with Store(state_db_path(tmp_path)) as s:
+        yield s
+
+
+def test_ticket_roundtrip_with_extra_fields(store: Store):
+    t = Ticket("T-1", issue=42, title="Add x", branch="devflow/42-add-x", worktree="/w",
+               base_sha="abc", sessions={"coder": "s1"})
+    store.save_ticket(t)
+    got = store.get_ticket("T-1")
+    assert got == t and store.get_ticket("nope") is None
+
+
+def test_transition_persists_state_history_and_event(store: Store):
+    t = Ticket("T-2")
+    store.save_ticket(t)
+    store.transition(t, State.REFINING, actor="engine", reason="start")
+    got = store.get_ticket("T-2")
+    assert got.state is State.REFINING
+    assert got.history == [
+        {"from": "new", "to": "refining", "actor": "engine", "reason": "start"}
+    ]
+    assert store.events("T-2", "transition")[0]["to"] == "refining"
+
+
+def test_illegal_transition_writes_nothing(store: Store):
+    t = Ticket("T-3")
+    store.save_ticket(t)
+    with pytest.raises(TransitionError):
+        store.transition(t, State.MERGED, actor="agent")
+    assert store.get_ticket("T-3").state is State.NEW
+    assert store.events("T-3") == []
+
+
+def test_cap_hit_writes_nothing(store: Store):
+    limits = Limits(max_review_rounds=1)
+    t = Ticket("T-4", state=State.IN_REVIEW, review_round=1)
+    store.save_ticket(t)
+    with pytest.raises(LimitExceeded):
+        store.transition(t, State.CHANGES_REQUESTED, actor="reviewer", limits=limits)
+    assert store.get_ticket("T-4").review_round == 1 and t.review_round == 1
+
+
+def test_failed_write_rolls_back_memory(store: Store, monkeypatch: pytest.MonkeyPatch):
+    t = Ticket("T-5")
+    store.save_ticket(t)
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(Store, "_write_ticket", staticmethod(boom))
+    with pytest.raises(RuntimeError):
+        store.transition(t, State.REFINING, actor="engine")
+    assert t.state is State.NEW and t.history == []
+    assert store.get_ticket("T-5").state is State.NEW
+
+
+def test_resume_from_disk(tmp_path: Path):
+    path = state_db_path(tmp_path)
+    with Store(path) as s:
+        t = Ticket("T-6")
+        s.save_ticket(t)
+        s.transition(t, State.REFINING, actor="engine")
+    with Store(path) as s:
+        assert s.get_ticket("T-6").state is State.REFINING
+
+
+def test_list_by_state_and_stage_results(store: Store):
+    a, b = Ticket("A"), Ticket("B", state=State.IMPLEMENTING)
+    store.save_ticket(a)
+    store.save_ticket(b)
+    assert [t.id for t in store.list_tickets(State.IMPLEMENTING)] == ["B"]
+    assert {t.id for t in store.list_tickets()} == {"A", "B"}
+    store.add_stage_result("B", "gates", 1, False, {"failed": ["unit"]})
+    store.add_stage_result("B", "gates", 2, True, {})
+    results = store.stage_results("B", "gates")
+    assert [r["ok"] for r in results] == [False, True]
+    assert results[0]["payload"] == {"failed": ["unit"]}

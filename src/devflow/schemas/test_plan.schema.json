@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TestPlan",
+  "type": "object",
+  "required": ["tests", "uncovered_criteria"],
+  "properties": {
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "criterion_ids", "kind", "description", "target_files"],
+        "properties": {
+          "id": { "type": "string" },
+          "criterion_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "kind": { "enum": ["unit", "integration"] },
+          "description": { "type": "string" },
+          "target_files": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "uncovered_criteria": {
+      "type": "array",
+      "maxItems": 0,
+      "items": { "type": "string" },
+      "description": "Must be empty. A criterion with no test sends the plan back to refinement."
+    }
+  }
+}

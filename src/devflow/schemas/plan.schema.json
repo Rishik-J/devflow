@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": { "enum": ["needs_clarification", "ready"] },
+    "questions": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["question", "proposed_default"],
+        "properties": {
+          "question": { "type": "string" },
+          "proposed_default": { "type": "string" }
+        }
+      }
+    },
+    "goal": { "type": "string" },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "properties": { "id": { "type": "string" }, "text": { "type": "string" } }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "files"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "out_of_scope": { "type": "array", "items": { "type": "string" } },
+    "risks": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "ready" } } },
+      "then": { "required": ["goal", "acceptance_criteria", "steps"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "needs_clarification" } } },
+      "then": { "required": ["questions"] }
+    }
+  ]
+}

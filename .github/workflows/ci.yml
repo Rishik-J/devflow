@@ -1,0 +1,13 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --no-project --with ruff ruff check .
+      - run: uv run --no-project --with pytest --with-editable . python -m pytest -q
