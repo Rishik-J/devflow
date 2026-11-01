@@ -48,6 +48,25 @@ CREATE TABLE IF NOT EXISTS events (
     payload TEXT NOT NULL,
     ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent TEXT NOT NULL,
+    role TEXT NOT NULL,
+    ticket_id TEXT NOT NULL DEFAULT '',
+    ts REAL NOT NULL,
+    cost_usd REAL NOT NULL,
+    tokens_in INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    ok INTEGER NOT NULL,
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS agent_cooldown (
+    agent TEXT PRIMARY KEY,
+    until REAL NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    strikes INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_usage_agent_ts ON agent_usage(agent, ts);
 CREATE INDEX IF NOT EXISTS idx_stage_ticket ON stage_results(ticket_id, stage);
 CREATE INDEX IF NOT EXISTS idx_events_ticket ON events(ticket_id);
 """
@@ -175,6 +194,44 @@ class Store:
                 " VALUES (?,?,?,?,?,?)",
                 (ticket_id, stage, attempt, int(ok), json.dumps(payload), time.time()),
             )
+
+    def record_usage(
+        self, agent: str, role: str, ticket_id: str, *, cost_usd: float, tokens_in: int = 0,
+        tokens_out: int = 0, ok: bool = True, error: str = "", ts: float | None = None,
+    ) -> None:
+        with self._tx() as db:
+            db.execute(
+                "INSERT INTO agent_usage (agent, role, ticket_id, ts, cost_usd, tokens_in,"
+                " tokens_out, ok, error) VALUES (?,?,?,?,?,?,?,?,?)",
+                (agent, role, ticket_id, ts if ts is not None else time.time(), cost_usd,
+                 tokens_in, tokens_out, int(ok), error[:500]),
+            )
+
+    def usage_since(self, agent: str, since: float) -> dict[str, float]:
+        row = self._db.execute(
+            "SELECT COALESCE(SUM(cost_usd),0) c, COALESCE(SUM(tokens_in),0) ti,"
+            " COALESCE(SUM(tokens_out),0) toks, COUNT(*) n FROM agent_usage"
+            " WHERE agent=? AND ts>=?", (agent, since),
+        ).fetchone()
+        return {"cost_usd": row["c"], "tokens_in": row["ti"], "tokens_out": row["toks"],
+                "runs": row["n"]}
+
+    def set_cooldown(self, agent: str, until: float, reason: str, strikes: int) -> None:
+        with self._tx() as db:
+            db.execute(
+                "INSERT INTO agent_cooldown (agent, until, reason, strikes) VALUES (?,?,?,?)"
+                " ON CONFLICT(agent) DO UPDATE SET until=excluded.until,"
+                " reason=excluded.reason, strikes=excluded.strikes",
+                (agent, until, reason[:300], strikes),
+            )
+
+    def get_cooldown(self, agent: str) -> dict[str, Any] | None:
+        row = self._db.execute("SELECT * FROM agent_cooldown WHERE agent=?", (agent,)).fetchone()
+        return dict(row) if row else None
+
+    def clear_cooldown(self, agent: str) -> None:
+        with self._tx() as db:
+            db.execute("DELETE FROM agent_cooldown WHERE agent=?", (agent,))
 
     def stage_results(self, ticket_id: str, stage: str | None = None) -> list[dict[str, Any]]:
         sql, args = "SELECT * FROM stage_results WHERE ticket_id=?", [ticket_id]

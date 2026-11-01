@@ -13,7 +13,9 @@ plan, writing code, reviewing it, and triaging feedback. See [DESIGN.md](DESIGN.
 | Ticket state machine with retry caps | done |
 | Foundations: SQLite store, config loader, schema validation, worktrees, env setup, gate runner, diff guard | done |
 | Code graph kept fresh on every edit + agent context (`devflow graph ...`) | done, not yet wired into agents |
-| Agent drivers, stages, engine, GitHub Projects, learning loop, `devflow run` | not built yet (see plan) |
+| Agent drivers: Claude Code, Codex, OpenClaw verified live; Cursor written, needs `agent login` to verify | done |
+| Usage-based routing of coding work across claude / codex / cursor (`devflow agents`) | done |
+| Stages, engine, GitHub Projects, learning loop, `devflow run` | not built yet (see plan) |
 
 ## Install
 
@@ -62,6 +64,25 @@ engine calls `ensure_fresh` before each agent starts and after each round of edi
 incremental rebuild takes about a second and uses no LLM. A new worktree has no graph, so the
 first call there builds it. Agents get the digest (`agent_preamble`) and the graphify tools
 (`mcp_config` for Claude, `codex_overrides` for Codex) from `graphctx.py`.
+
+## Coding agents and routing
+
+`devflow doctor` checks which tools are installed and logged in. Coding-heavy roles (coder,
+reviewer, test planner) are routed across `claude`, `codex` and `cursor` (the Cursor CLI, which
+installs as `agent`) by `[routing]` in `.devflow/config.toml`:
+
+- Each agent has a budget window (`window_hours`, `limit_usd`; 0 = no local cap). The agent with
+  the most headroom gets the next job (`strategy = "priority"` uses the priority order instead).
+- A rate or usage limit puts that agent on a cooldown that doubles on repeats (capped), and the
+  job falls through to the next agent in the same call. Sessions are not portable across tools,
+  so a switched job starts a fresh session.
+- The reviewer prefers a different tool from the coder. `devflow agents` shows readiness, usage,
+  headroom and cooldowns.
+
+None of the tools reports a true credit balance, so usage is the real cost when the tool gives
+one and a token-based estimate otherwise. Treat `limit_usd` as your own comfort limit.
+
+Live checks of the real CLIs: `DEVFLOW_LIVE=1 pytest tests/test_live_agents.py`.
 
 ## Develop
 

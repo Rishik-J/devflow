@@ -23,20 +23,45 @@ def _list(values: list[str]) -> str:
     return "[" + ", ".join(_s(v) for v in values) + "]"
 
 
-def pick_agents(have_claude: bool, have_codex: bool) -> tuple[str, str, list[str]]:
-    """Coder and reviewer should be different models when both are available."""
-    if have_claude and have_codex:
-        return "claude", "codex", []
-    only = "claude" if have_claude else "codex"
-    warn = [
-        (
-            "only one coding agent installed: the reviewer will be the same model as the coder, "
-            "so reviews are less independent"
+CODING_AGENTS = ("claude", "codex", "cursor")
+
+
+def pick_agents(available: list[str]) -> tuple[str, str, list[str]]:
+    """Default coder and reviewer. They should be different tools when more than one exists."""
+    ordered = [a for a in CODING_AGENTS if a in available]
+    if not ordered:
+        missing = (
+            "no coding agent (`claude`, `codex` or `agent`) found on PATH: "
+            "install one before running tickets"
         )
+        return "claude", "claude", [missing]
+    coder = ordered[0]
+    if len(ordered) > 1:
+        return coder, ordered[1], []
+    same = (
+        "only one coding agent installed: the reviewer will be the same model as the coder, "
+        "so reviews are less independent"
+    )
+    return coder, coder, [same]
+
+
+def render_routing(available: list[str]) -> list[str]:
+    """Default routing: spread coding-heavy work across whatever agents are installed."""
+    lines = [
+        "",
+        "# Coding-heavy roles are routed across the agents below by remaining headroom in",
+        "# their budget window. limit_usd = 0 means no local cap (rate-limit errors still",
+        "# trigger a cooldown). Set limit_usd to your own comfort level per window.",
+        "[routing]",
+        'roles = ["coder", "reviewer", "test_planner"]',
+        'strategy = "headroom"   # or "priority": always prefer the lowest priority number',
+        "cooldown_minutes = 30",
+        "cooldown_max_hours = 6",
     ]
-    if not (have_claude or have_codex):
-        warn = ["neither `claude` nor `codex` found on PATH: install one before running tickets"]
-    return only, only, warn
+    for rank, name in enumerate([a for a in CODING_AGENTS if a in available], start=1):
+        lines += ["", f"[routing.agents.{name}]", f"priority = {rank}", "window_hours = 5",
+                  "limit_usd = 0"]
+    return lines
 
 
 def needs_input(profile: Profile, agent_warnings: list[str]) -> list[str]:
@@ -57,7 +82,8 @@ def needs_input(profile: Profile, agent_warnings: list[str]) -> list[str]:
 
 
 def render_config(
-    profile: Profile, coder: str, reviewer: str, graph: GraphResult | None
+    profile: Profile, coder: str, reviewer: str, graph: GraphResult | None,
+    available: list[str] | None = None,
 ) -> str:
     lines = [
         f"# devflow config for {profile.name}.",
@@ -92,6 +118,7 @@ def render_config(
     ]
     if graph and graph.ok:
         lines += [f"nodes = {graph.nodes}", f"edges = {graph.edges}"]
+    lines += render_routing(available if available is not None else [coder, reviewer])
     lines += ["", "[ci]", f"workflows = {_list(profile.ci_workflows)}",
               f"hints = {_list(profile.ci_hints)}"]
     for p in profile.projects:

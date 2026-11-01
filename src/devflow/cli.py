@@ -42,18 +42,59 @@ def _doctor(_: argparse.Namespace) -> int:
             subprocess.run(["gh", "auth", "status"], capture_output=True, check=False).returncode
             == 0
         )
+    cursor_bin = "agent" if has("agent") else "cursor-agent"
+    cursor_installed = has(cursor_bin)
+    cursor_ready, cursor_why = (False, "not installed")
+    if cursor_installed:
+        from .agents import CursorAgent
+
+        cursor_ready, cursor_why = CursorAgent(cursor_bin).check_ready()
     checks = [
         ("git", has("git"), "required"),
         ("gh (authenticated)", gh_ok, "required for PRs"),
         ("claude", has("claude"), "coding agent"),
         ("codex", has("codex"), "coding/review agent"),
+        ("cursor (logged in)", cursor_ready,
+         "coding agent" if cursor_ready else cursor_why or "coding agent"),
         ("graphify", has("graphify"), "code graph: `uv tool install graphifyy`"),
         ("openclaw", has("openclaw"), "planner / triage / notifications"),
     ]
     for name, ok, note in checks:
         print(f"  {'ok ' if ok else 'MISSING'}  {name:<20} {note}")
-    required = has("git") and gh_ok and (has("claude") or has("codex"))
-    return 0 if required else 1
+    coding = has("claude") or has("codex") or cursor_ready
+    return 0 if has("git") and gh_ok and coding else 1
+
+
+def _agents(args: argparse.Namespace) -> int:
+    from .detect import repo_root
+    from .loadconfig import ConfigError, load_config
+    from .router import build_router
+    from .store import Store, state_db_path
+
+    root = repo_root(Path(args.path).resolve())
+    if root is None:
+        print("error: not inside a git repository", file=sys.stderr)
+        return 2
+    try:
+        cfg = load_config(root)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    with Store(state_db_path(root)) as store:
+        router = build_router(cfg, store)
+        print(f"routing: {cfg.routing.strategy}; roles: {', '.join(cfg.routing.roles)}")
+        print(f"  {'agent':<8} {'state':<14} {'used':>9} {'cap':>9} {'headroom':>9} {'runs':>5}")
+        for s in router.statuses():
+            if not s.ready:
+                state = "not ready"
+            elif s.cooldown_until:
+                state = f"cooldown {max(0, int((s.cooldown_until - router.now()) / 60))}m"
+            else:
+                state = "ready"
+            cap = f"${s.limit_usd:.2f}" if s.limit_usd else "none"
+            print(f"  {s.name:<8} {state:<14} {'$' + format(s.used_usd, '.2f'):>9} {cap:>9} "
+                  f"{s.headroom:>9.0%} {s.runs:>5}" + (f"   <- {s.reason}" if not s.ready else ""))
+    return 0
 
 
 def _graph(args: argparse.Namespace) -> int:
@@ -101,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     p_doc = sub.add_parser("doctor", help="check required tools")
     p_doc.set_defaults(func=_doctor)
 
-    p_graph = sub.add_parser("graph", help="keep the code graph fresh; print agent context")
+    p_agents = sub.add_parser("agents", help="show coding-agent routing: readiness, usage, headroom")
+    p_agents.add_argument("path", nargs="?", default=".")
+    p_agents.set_defaults(func=_agents)
+
+    p_graph = sub.add_parser("graph",help="keep the code graph fresh; print agent context")
     gsub = p_graph.add_subparsers(dest="graph_cmd", required=True)
     for name, help_text in (
         ("status", "is the graph up to date with the working tree?"),

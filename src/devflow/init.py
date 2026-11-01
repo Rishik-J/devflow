@@ -20,7 +20,8 @@ from .config import (
 from .detect import Profile, detect_profile, repo_root
 from .graphify import GraphResult, build_graph
 
-LOCAL_EXCLUDES = ("graphify-out/", ".devflow/state/", ".venv/", "node_modules/")
+AGENT_BINARIES = {"claude": ("claude",), "codex": ("codex",), "cursor": ("agent", "cursor-agent")}
+LOCAL_EXCLUDES =("graphify-out/", ".devflow/state/", ".venv/", "node_modules/")
 
 
 class InitError(RuntimeError):
@@ -82,10 +83,11 @@ def run_init(
 
     if use_graph:
         result.graph = graph_builder(root)
-    coder, reviewer, warnings = pick_agents(bool(which("claude")), bool(which("codex")))
+    available = [name for name, bins in AGENT_BINARIES.items() if any(which(b) for b in bins)]
+    coder, reviewer, warnings = pick_agents(available)
 
     _write(root, ".devflow/config.toml",
-           render_config(profile, coder, reviewer, result.graph), force, result)
+           render_config(profile, coder, reviewer, result.graph, available), force, result)
     for name in PROMPTS:
         _write(root, f".devflow/prompts/{name}.md",
                render_prompt(name, profile, result.graph), force, result)

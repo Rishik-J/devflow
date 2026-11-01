@@ -27,6 +27,26 @@ class ProjectCfg:
 
 
 @dataclass
+class AgentBudget:
+    """Local accounting for one coding agent. `limit_usd` of 0 means unlimited."""
+
+    priority: int = 10
+    window_hours: float = 5.0
+    limit_usd: float = 0.0
+    usd_per_mtok_in: float = 3.0
+    usd_per_mtok_out: float = 15.0
+
+
+@dataclass
+class RoutingCfg:
+    roles: tuple[str, ...] = ("coder", "reviewer", "test_planner")
+    strategy: str = "headroom"
+    cooldown_minutes: float = 30.0
+    cooldown_max_hours: float = 6.0
+    agents: dict[str, AgentBudget] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     root: Path
     name: str
@@ -40,6 +60,7 @@ class Config:
     agents: dict[str, str]
     projects: list[ProjectCfg]
     github: dict[str, str]
+    routing: RoutingCfg = field(default_factory=RoutingCfg)
 
 
 def config_path(root: Path) -> Path:
@@ -51,6 +72,40 @@ def _positive_int(section: dict, key: str, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigError(f"[limits] {key} must be a positive integer, got {value!r}")
     return value
+
+
+def _number(section: dict, key: str, default: float, where: str, *, minimum: float = 0.0) -> float:
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < minimum:
+        raise ConfigError(f"{where} {key} must be a number >= {minimum}, got {value!r}")
+    return float(value)
+
+
+def _routing(data: dict) -> RoutingCfg:
+    section = data.get("routing", {})
+    strategy = section.get("strategy", "headroom")
+    if strategy not in ("headroom", "priority"):
+        raise ConfigError(f"[routing] strategy must be 'headroom' or 'priority', got {strategy!r}")
+    roles = section.get("roles", list(RoutingCfg.roles))
+    if not (isinstance(roles, list) and all(isinstance(r, str) for r in roles)):
+        raise ConfigError("[routing] roles must be a list of role names")
+    budgets: dict[str, AgentBudget] = {}
+    for name, entry in section.get("agents", {}).items():
+        where = f"[routing.agents.{name}]"
+        budgets[name] = AgentBudget(
+            priority=int(_number(entry, "priority", 10, where)),
+            window_hours=_number(entry, "window_hours", 5.0, where, minimum=0.01),
+            limit_usd=_number(entry, "limit_usd", 0.0, where),
+            usd_per_mtok_in=_number(entry, "usd_per_mtok_in", 3.0, where),
+            usd_per_mtok_out=_number(entry, "usd_per_mtok_out", 15.0, where),
+        )
+    return RoutingCfg(
+        roles=tuple(roles),
+        strategy=strategy,
+        cooldown_minutes=_number(section, "cooldown_minutes", 30.0, "[routing]", minimum=0.1),
+        cooldown_max_hours=_number(section, "cooldown_max_hours", 6.0, "[routing]", minimum=0.1),
+        agents=budgets,
+    )
 
 
 def load_config(root: Path) -> Config:
@@ -101,4 +156,5 @@ def load_config(root: Path) -> Config:
         agents={k: str(v) for k, v in data.get("agents", {}).items()},
         projects=projects,
         github={k: str(v) for k, v in data.get("github", {}).items()},
+        routing=_routing(data),
     )
