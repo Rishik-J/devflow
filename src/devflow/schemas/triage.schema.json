@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Triage",
+  "type": "object",
+  "required": ["decision", "reason"],
+  "properties": {
+    "decision": { "enum": ["retry", "replan", "escalate"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "message_to_coder": { "type": "string" }
+  }
+}

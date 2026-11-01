@@ -12,7 +12,7 @@ from .graphify import GraphResult
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 SCHEMA_DIR = Path(__file__).parent / "schemas"
 PROMPTS = ("planner", "test_planner", "coder", "reviewer", "triage")
-SCHEMAS = ("plan", "test_plan", "review")
+SCHEMAS = ("plan", "test_plan", "review", "triage")
 
 
 def _s(value: str) -> str:
@@ -105,13 +105,16 @@ def render_config(
         "[human_gates]",
         "plan_approval = true",
         "merge_approval = true",
-        'notify = "imessage"',
+        "# GitHub logins allowed to /approve, /answer, /reject and /resume (default: the gh user)",
+        "# approvers = []",
+        "# Run when a ticket needs you; {text} is the message. Example (iMessage via imsg):",
+        '# notify_command = "imsg send --to +15551234567 --text {text}"',
         "",
         "[agents]",
         f"coder = {_s(coder)}",
         f"reviewer = {_s(reviewer)}",
-        'planner = "openclaw:planner"',
-        'triage = "openclaw:main"',
+        'planner = "openclaw:devflow"   # created by `devflow setup-openclaw`',
+        'triage = "openclaw:devflow"',
         "",
         "[graphify]",
         f"enabled = {'true' if graph and graph.ok else 'false'}",

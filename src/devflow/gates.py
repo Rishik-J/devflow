@@ -40,6 +40,9 @@ def project_env(cwd: Path, base: dict[str, str] | None = None) -> dict[str, str]
     """Scrubbed env with the project's own tool directories first on PATH."""
     env = scrubbed_env(base)
     env.pop("VIRTUAL_ENV", None)
+    # Stale .pyc files can make a fixed bug look unfixed (same size, same second), and they
+    # would pollute the worktree. Gates always run against the source.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     tool_dirs = [str(p) for p in (cwd / ".venv" / "bin", cwd / "node_modules" / ".bin")
                  if p.is_dir()]
     if tool_dirs:

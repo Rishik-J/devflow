@@ -61,6 +61,8 @@ class Config:
     projects: list[ProjectCfg]
     github: dict[str, str]
     routing: RoutingCfg = field(default_factory=RoutingCfg)
+    approvers: list[str] = field(default_factory=list)
+    notify_command: str = ""
 
 
 def config_path(root: Path) -> Path:
@@ -79,6 +81,13 @@ def _number(section: dict, key: str, default: float, where: str, *, minimum: flo
     if isinstance(value, bool) or not isinstance(value, int | float) or value < minimum:
         raise ConfigError(f"{where} {key} must be a number >= {minimum}, got {value!r}")
     return float(value)
+
+
+def _str_list(section: dict, key: str) -> list[str]:
+    value = section.get(key, [])
+    if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+        raise ConfigError(f"[human_gates] {key} must be a list of strings")
+    return list(value)
 
 
 def _routing(data: dict) -> RoutingCfg:
@@ -157,4 +166,6 @@ def load_config(root: Path) -> Config:
         projects=projects,
         github={k: str(v) for k, v in data.get("github", {}).items()},
         routing=_routing(data),
+        approvers=_str_list(data.get("human_gates", {}), "approvers"),
+        notify_command=str(data.get("human_gates", {}).get("notify_command", "")),
     )

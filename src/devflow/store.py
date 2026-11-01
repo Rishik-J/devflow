@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS agent_cooldown (
     reason TEXT NOT NULL DEFAULT '',
     strikes INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS baselines (
+    key TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    ts REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_usage_agent_ts ON agent_usage(agent, ts);
 CREATE INDEX IF NOT EXISTS idx_stage_ticket ON stage_results(ticket_id, stage);
 CREATE INDEX IF NOT EXISTS idx_events_ticket ON events(ticket_id);
@@ -183,7 +188,8 @@ class Store:
         if kind:
             sql, args = sql + " AND kind=?", [*args, kind]
         rows = self._db.execute(sql + " ORDER BY id", args)
-        return [{"kind": r["kind"], "ts": r["ts"], **json.loads(r["payload"])} for r in rows]
+        # fixed keys last, so a payload field can never overwrite the event's own kind/ts
+        return [{**json.loads(r["payload"]), "kind": r["kind"], "ts": r["ts"]} for r in rows]
 
     def add_stage_result(
         self, ticket_id: str, stage: str, attempt: int, ok: bool, payload: dict[str, Any]
@@ -215,6 +221,18 @@ class Store:
         ).fetchone()
         return {"cost_usd": row["c"], "tokens_in": row["ti"], "tokens_out": row["toks"],
                 "runs": row["n"]}
+
+    def get_baseline(self, key: str) -> dict[str, Any] | None:
+        row = self._db.execute("SELECT payload FROM baselines WHERE key=?", (key,)).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def set_baseline(self, key: str, payload: dict[str, Any]) -> None:
+        with self._tx() as db:
+            db.execute(
+                "INSERT INTO baselines (key, payload, ts) VALUES (?,?,?)"
+                " ON CONFLICT(key) DO UPDATE SET payload=excluded.payload, ts=excluded.ts",
+                (key, json.dumps(payload), time.time()),
+            )
 
     def set_cooldown(self, agent: str, until: float, reason: str, strikes: int) -> None:
         with self._tx() as db:

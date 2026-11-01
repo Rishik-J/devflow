@@ -85,3 +85,26 @@ def test_list_by_state_and_stage_results(store: Store):
     results = store.stage_results("B", "gates")
     assert [r["ok"] for r in results] == [False, True]
     assert results[0]["payload"] == {"failed": ["unit"]}
+
+
+def test_event_payload_cannot_overwrite_the_event_kind(store: Store):
+    store.add_event("T-9", "command", {"kind": "approve", "ts": "x", "comment_id": 7})
+    event = store.events("T-9", "command")[0]
+    assert event["kind"] == "command" and isinstance(event["ts"], float)
+    assert event["comment_id"] == 7
+
+
+def test_usage_cooldown_and_baseline_roundtrip(store: Store):
+    store.record_usage("claude", "coder", "T", cost_usd=1.5, tokens_in=10, tokens_out=5, ts=100.0)
+    store.record_usage("claude", "coder", "T", cost_usd=0.5, ts=50.0)
+    assert store.usage_since("claude", 80.0) == {
+        "cost_usd": 1.5, "tokens_in": 10, "tokens_out": 5, "runs": 1}
+    assert store.get_cooldown("claude") is None
+    store.set_cooldown("claude", 500.0, "limit", 2)
+    assert store.get_cooldown("claude")["strikes"] == 2
+    store.clear_cooldown("claude")
+    assert store.get_cooldown("claude") is None
+    assert store.get_baseline("k") is None
+    store.set_baseline("k", {"a": 1})
+    store.set_baseline("k", {"a": 2})
+    assert store.get_baseline("k") == {"a": 2}

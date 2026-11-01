@@ -97,6 +97,74 @@ def _agents(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ticket(args: argparse.Namespace) -> int:
+    import time
+
+    from .agents import AgentError
+    from .detect import repo_root
+    from .host import HostError
+    from .loadconfig import ConfigError
+    from .runtime import build_engine
+
+    root = repo_root(Path(args.path).resolve())
+    if root is None:
+        print("error: not inside a git repository", file=sys.stderr)
+        return 2
+    try:
+        engine, store, _ = build_engine(root, dry_run=args.dry_run, log=print)
+    except (ConfigError, HostError, AgentError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    outcome = None
+    try:
+        while True:
+            outcome = engine.run(args.issue)
+            print(f"#{args.issue}: {outcome.status} - {outcome.ticket.state.value}"
+                  + (f" ({outcome.reason})" if outcome.reason else ""))
+            if outcome.status != "paused" or not args.watch:
+                break
+            time.sleep(args.watch)
+    except KeyboardInterrupt:
+        print("stopped; run again to resume")
+    finally:
+        if args.dry_run:
+            print("dry run: would have written to GitHub:")
+            for w in getattr(engine.host, "writes", []):
+                print(f"  - {w}")
+        store.close()
+    if outcome is None:
+        return 130
+    return {"done": 0, "paused": 0, "escalated": 3}.get(outcome.status, 1)
+
+
+def _tickets(args: argparse.Namespace) -> int:
+    from .detect import repo_root
+    from .store import Store, state_db_path
+
+    root = repo_root(Path(args.path).resolve())
+    if root is None or not state_db_path(root).exists():
+        print("no tickets yet")
+        return 0
+    with Store(state_db_path(root)) as store:
+        for t in store.list_tickets():
+            pr = f" PR #{t.sessions['pr']}" if t.sessions.get("pr") else ""
+            print(f"{t.id:>6}  {t.state.value:<26} attempts {t.implement_attempts} "
+                  f"rounds {t.review_round}{pr}  {t.title}")
+    return 0
+
+
+def _setup_openclaw(args: argparse.Namespace) -> int:
+    from . import openclaw_setup
+
+    try:
+        result = openclaw_setup.setup(args.model)
+    except (RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(result.detail)
+    return 0
+
+
 def _graph(args: argparse.Namespace) -> int:
     from . import graphctx
     from .detect import repo_root
@@ -141,6 +209,23 @@ def main(argv: list[str] | None = None) -> int:
 
     p_doc = sub.add_parser("doctor", help="check required tools")
     p_doc.set_defaults(func=_doctor)
+
+    p_ticket = sub.add_parser("ticket", help="work one GitHub issue until it needs you or is done")
+    p_ticket.add_argument("issue", type=int)
+    p_ticket.add_argument("path", nargs="?", default=".")
+    p_ticket.add_argument("--dry-run", action="store_true",
+                          help="read GitHub but only log what would be written (agents still run)")
+    p_ticket.add_argument("--watch", type=int, default=0, metavar="SECONDS",
+                          help="keep polling for your /approve etc. every N seconds")
+    p_ticket.set_defaults(func=_ticket)
+
+    p_tickets = sub.add_parser("tickets", help="list tickets devflow is working on")
+    p_tickets.add_argument("path", nargs="?", default=".")
+    p_tickets.set_defaults(func=_tickets)
+
+    p_oc = sub.add_parser("setup-openclaw", help="create the OpenClaw agent used for planning")
+    p_oc.add_argument("--model", default="claude-cli/claude-sonnet-5-5")
+    p_oc.set_defaults(func=_setup_openclaw)
 
     p_agents = sub.add_parser("agents", help="show coding-agent routing: readiness, usage, headroom")
     p_agents.add_argument("path", nargs="?", default=".")
