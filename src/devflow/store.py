@@ -234,6 +234,12 @@ class Store:
         return {"cost_usd": row["c"], "tokens_in": row["ti"], "tokens_out": row["toks"],
                 "runs": row["n"]}
 
+    def usage_for_ticket(self, ticket_id: str) -> dict[str, float]:
+        rows = self._db.execute(
+            "SELECT agent, COALESCE(SUM(cost_usd),0) c FROM agent_usage WHERE ticket_id=?"
+            " GROUP BY agent", (ticket_id,))
+        return {r["agent"]: round(r["c"], 4) for r in rows}
+
     def get_baseline(self, key: str) -> dict[str, Any] | None:
         row = self._db.execute("SELECT payload FROM baselines WHERE key=?", (key,)).fetchone()
         return json.loads(row["payload"]) if row else None

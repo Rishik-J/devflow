@@ -89,7 +89,7 @@ class Env:
         self.notifier = RecordingNotifier()
 
     def engine(self, *, coder=None, reviewer=None, planner=None, test_planner=None,
-               triage=None, host=None, **kw) -> Engine:
+               triage=None, retro=None, host=None, **kw) -> Engine:
         coder_agent = FakeAgent(self._dispatch(coder, test_planner), name="claude")
         review_agent = FakeAgent(self._dispatch(None, None, reviewer), name="codex")
         router = Router(self.store, self.cfg.routing,
@@ -97,6 +97,8 @@ class Env:
         self.coder_agent, self.review_agent = coder_agent, review_agent
         agents = {"planner": planner or FakeAgent({"planner": [PLAN] * 10}),
                   "triage": triage or FakeAgent({"triage": []})}
+        if retro is not None:
+            agents["retro"] = retro
         self.planner = agents["planner"]
         return Engine(self.cfg, self.store, host or self.host, router, agents, self.notifier,
                       graph_builder=lambda r: GraphResult(False, False, message="skip"), **kw)

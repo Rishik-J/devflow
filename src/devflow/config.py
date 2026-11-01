@@ -11,8 +11,8 @@ from .graphify import GraphResult
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 SCHEMA_DIR = Path(__file__).parent / "schemas"
-PROMPTS = ("planner", "test_planner", "coder", "reviewer", "triage")
-SCHEMAS = ("plan", "test_plan", "review", "triage")
+PROMPTS = ("planner", "test_planner", "coder", "reviewer", "triage", "retro")
+SCHEMAS = ("plan", "test_plan", "review", "triage", "lesson")
 
 
 def _s(value: str) -> str:
@@ -115,6 +115,14 @@ def render_config(
         "[review]",
         "require_integration = false",
         "",
+        "# Lessons learned from finished tickets. They start as candidates and reach prompts only",
+        "# after recurring in `promote_after` tickets, or when a person states them (/learn).",
+        "[learning]",
+        "enabled = true",
+        "budget_chars = 4000",
+        "promote_after = 2",
+        "max_idle_runs = 40",
+        "",
         "# The GitHub Project that holds the queue (needs `gh auth refresh -s project`).",
         "# Statuses it must have: Backlog, Ready, In progress, In review, Done.",
         "# [github]",
@@ -129,6 +137,7 @@ def render_config(
         f"reviewer = {_s(reviewer)}",
         'planner = "openclaw:devflow"   # created by `devflow setup-openclaw`',
         'triage = "openclaw:devflow"',
+        'retro = "openclaw:devflow"     # distils lessons after each ticket',
         "",
         "[graphify]",
         f"enabled = {'true' if graph and graph.ok else 'false'}",

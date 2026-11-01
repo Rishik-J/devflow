@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from .host import STATUS_MARKER, Comment
 
-KINDS = ("approve", "answer", "reject", "resume")
+KINDS = ("approve", "answer", "reject", "resume", "learn")
 
 
 @dataclass(frozen=True)

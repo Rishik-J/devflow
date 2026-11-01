@@ -23,9 +23,13 @@ from pathlib import Path
 from . import baseline, commands, diffguard, followups, gitops, graphctx, prompts, worktree
 from .agents import Agent, AgentError, AgentRequest, AgentResult, run_structured
 from .board import Board, BoardError, status_for
+from .context import ledger_path, load_brief
 from .gates import GateReport, run_gates, setup_worktree
 from .graphify import build_graph
 from .host import Host, HostError, upsert_status
+from .learn import retro
+from .learn.capture import capture
+from .learn.ledger import Ledger, LessonRejected, parse_learn, render_for_prompt
 from .loadconfig import Config
 from .notify import Notifier, NullNotifier
 from .router import NoAgentAvailable, Router, run_routed
@@ -95,6 +99,8 @@ class Engine:
         if ticket is None:
             ticket = Ticket(id=f"#{issue}", issue=issue)
             self.store.save_ticket(ticket)
+        else:
+            self._apply_learn_commands(ticket)
         for _ in range(self.max_steps):
             if ticket.state in TERMINAL:
                 return Outcome(ticket, "done", ticket.state.value)
@@ -153,6 +159,7 @@ class Engine:
                 "Fix or answer in the issue, then comment `/resume`.")
         self._say(ticket, text)
         self.notifier.send(text)
+        self._learn(ticket, "escalated", reason)
 
     def _put(self, ticket: Ticket, kind: str, payload: dict, ok: bool = True) -> None:
         attempt = len(self.store.stage_results(ticket.id, kind)) + 1
@@ -191,7 +198,8 @@ class Engine:
 
     def _consume(self, ticket: Ticket, cmd: commands.Command) -> None:
         self.store.add_event(ticket.id, "command", {"comment_id": cmd.comment_id,
-                                                    "command": cmd.kind, "author": cmd.author})
+                                                    "command": cmd.kind, "author": cmd.author,
+                                                    "text": cmd.text[:500]})
 
     def _gate_on(self, name: str) -> bool:
         return self.cfg.human_gates.get(name, True)
@@ -206,6 +214,7 @@ class Engine:
         wt = cwd or self._wt(ticket)
         graphctx.ensure_fresh(wt, builder=self.graph_builder)  # best effort; digest says if absent
         system = prompts.role_prompt(self.cfg.root, role) + "\n\n" + graphctx.agent_preamble(wt, files)
+        system += self._context_for(ticket, role, files or [])
         if schema:
             system += "\n\n" + prompts.schema_block(schema, self.cfg.root)
         return AgentRequest(
@@ -213,6 +222,23 @@ class Engine:
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,
             mcp=graphctx.mcp_config(wt), mcp_overrides=graphctx.codex_overrides(wt),
         )
+
+    def _context_for(self, ticket: Ticket, role: str, files: list[str]) -> str:
+        """The repo brief and the lessons that fit this role and these files."""
+        parts = []
+        brief = load_brief(self.cfg.root)
+        if brief:
+            parts.append("## Repository brief\n" + brief)
+        learning = self.cfg.learning
+        if learning.enabled and role != "retro":
+            ledger = Ledger(ledger_path(self.cfg.root))
+            chosen = ledger.select(role, files, learning.budget_chars, record=True)
+            if chosen:
+                ledger.save()
+                self.store.add_event(ticket.id, "lessons_used",
+                                     {"role": role, "ids": [x.id for x in chosen]})
+                parts.append(render_for_prompt(chosen))
+        return ("\n\n" + "\n\n".join(parts)) if parts else ""
 
     def _plain(self, role: str, req: AgentRequest) -> AgentResult:
         agent = self.agents.get(role)
@@ -606,6 +632,7 @@ class Engine:
         text += self._file_followups(t)
         self._say(t, text)
         self.notifier.send(text)
+        self._learn(t, "merged")
         if not self.dry_run:
             worktree.remove(self.cfg.root, self._wt(t), delete_branch=True)
             review = self.cfg.worktree_root / f"{t.branch.split('/', 1)[-1]}-review"
@@ -628,6 +655,56 @@ class Engine:
             return ""
         lines = "\n".join(f"- #{f.issue.number} {f.candidate.title}" for f in report.filed)
         return ("\n\nFiled in Backlog (move to Ready to work them):\n" + lines)
+
+    def _learn(self, t: Ticket, outcome: str, reason: str = "") -> None:
+        """Capture what the ticket taught and file candidate lessons. Never fails the ticket."""
+        learning = self.cfg.learning
+        if not learning.enabled or "retro" not in self.agents or self.dry_run:
+            return
+        episode = sum(1 for e in self.store.events(t.id)
+                      if e["kind"] == "transition" and e.get("to") == "escalated")
+        key = "merged" if outcome == "merged" else f"escalated#{episode}"
+        if any(e.get("key") == key for e in self.store.events(t.id, "learned")):
+            return
+        try:
+            record = capture(self.store, t, outcome, reason)
+            ledger = Ledger(ledger_path(self.cfg.root))
+            ledger.start_run()
+            report = retro.distill(
+                self.agents["retro"], record, ledger, root=self.cfg.root,
+                system=prompts.role_prompt(self.cfg.root, "retro"), cwd=self.cfg.root,
+                ticket=t.issue or 0, promote_after=learning.promote_after,
+                timeout_s=self.cfg.stage_timeout_minutes * 60)
+            ledger.retire_stale(learning.max_idle_runs)
+            ledger.save()
+        except (AgentError, OSError, ValueError, KeyError) as exc:
+            self.store.add_event(t.id, "learning_error", {"error": str(exc)[:300], "key": key})
+            self.log(f"{t.id}: learning failed: {exc}")
+            return
+        self.store.add_event(t.id, "learned", {
+            "key": key, "proposed": report.proposed, "added": [x.id for x in report.added],
+            "rejected": [{"statement": s, "why": why} for s, why in report.rejected]})
+
+    def _apply_learn_commands(self, t: Ticket) -> None:
+        """`/learn [type:] statement` from an approver is a lesson a person stated: active now."""
+        if not self.cfg.learning.enabled or self.dry_run or t.issue is None:
+            return
+        numbers = [t.issue] + ([int(t.sessions["pr"])] if t.sessions.get("pr") else [])
+        for number in numbers:
+            for cmd in self._commands(t, number, ("learn",)):
+                self._consume(t, cmd)
+                kind, statement = parse_learn(cmd.text)
+                ledger = Ledger(ledger_path(self.cfg.root))
+                try:
+                    lesson = ledger.add(
+                        type=kind, statement=statement, scope=None, ticket=t.issue,
+                        evidence=f"stated by {cmd.author}", source="human",
+                        promote_after=self.cfg.learning.promote_after)
+                    ledger.save()
+                    reply = f"Recorded as lesson `{lesson.id}` ({lesson.type}, {lesson.status})."
+                except LessonRejected as exc:
+                    reply = f"I could not record that lesson: {exc}."
+                self._say(t, reply, number=number)
 
     def cleanup_dry_run(self) -> None:
         """Remove the local worktrees and branches a dry run created. Nothing was pushed."""

@@ -70,6 +70,16 @@ class BoardCfg:
 
 
 @dataclass
+class LearningCfg:
+    """How lessons are kept. Retro runs only if an agent is configured for the `retro` role."""
+
+    enabled: bool = True
+    budget_chars: int = 4000
+    promote_after: int = 2
+    max_idle_runs: int = 40
+
+
+@dataclass
 class Config:
     root: Path
     name: str
@@ -88,6 +98,7 @@ class Config:
     notify_command: str = ""
     require_integration: bool = False
     board: BoardCfg = field(default_factory=BoardCfg)
+    learning: LearningCfg = field(default_factory=LearningCfg)
 
 
 def config_path(root: Path) -> Path:
@@ -165,6 +176,17 @@ def _board(data: dict) -> BoardCfg:
     )
 
 
+def _learning(data: dict) -> LearningCfg:
+    section = data.get("learning", {})
+    where = "[learning]"
+    return LearningCfg(
+        enabled=bool(section.get("enabled", True)),
+        budget_chars=int(_number(section, "budget_chars", 4000, where, minimum=200)),
+        promote_after=int(_number(section, "promote_after", 2, where, minimum=1)),
+        max_idle_runs=int(_number(section, "max_idle_runs", 40, where, minimum=1)),
+    )
+
+
 def load_config(root: Path) -> Config:
     path = config_path(root)
     if not path.exists():
@@ -219,4 +241,5 @@ def load_config(root: Path) -> Config:
         notify_command=str(data.get("human_gates", {}).get("notify_command", "")),
         require_integration=bool(data.get("review", {}).get("require_integration", False)),
         board=_board(data),
+        learning=_learning(data),
     )

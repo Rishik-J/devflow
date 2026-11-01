@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lessons",
+  "type": "object",
+  "required": ["lessons"],
+  "properties": {
+    "lessons": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["type", "statement", "evidence"],
+        "properties": {
+          "type": { "enum": ["convention", "gotcha", "command", "test-pattern", "reviewer-rule", "architecture", "process"] },
+          "statement": { "type": "string", "minLength": 1, "maxLength": 280 },
+          "scope": { "type": "array", "maxItems": 5, "items": { "type": "string" } },
+          "evidence": { "type": "string", "minLength": 1 },
+          "supersedes": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -14,7 +14,7 @@ from .notify import make_notifier
 from .router import build_router
 from .store import Store, reset_dry_run_db, state_db_path
 
-ENGINE_ROLES = ("planner", "triage")
+ENGINE_ROLES = ("planner", "triage", "retro")
 
 
 def build_engine(

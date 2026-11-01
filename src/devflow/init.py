@@ -17,6 +17,7 @@ from .config import (
     render_config,
     render_prompt,
 )
+from .context import brief_path, render_repo_brief
 from .detect import Profile, detect_profile, repo_root
 from .graphify import GraphResult, build_graph
 
@@ -93,6 +94,8 @@ def run_init(
                render_prompt(name, profile, result.graph), force, result)
     for name in SCHEMAS:
         _write(root, f".devflow/schemas/{name}.schema.json", read_schema(name), force, result)
+    _write(root, str(brief_path(root).relative_to(root)),
+           render_repo_brief(profile, result.graph), force, result)
 
     _local_excludes(root)
     result.needs_input = needs_input(profile, warnings)
