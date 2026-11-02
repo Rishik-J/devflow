@@ -96,7 +96,8 @@ disable tracing for that repository.
 | `usage.recorded` | Recorded coding usage and whether the cost came from reported data or an estimate |
 | `tool.shell`, `gate.result` | Gate/setup execution time, exit status, gate type, project and timeout outcome |
 | `tool.git`, `tool.github`, `tool.github_project` | Git and host operation latency and exception type |
-| `worktree.*`, `graph.refresh` | Checkout preparation and graph freshness overhead |
+| `worktree.*` | Checkout preparation overhead |
+| `graph.refresh` | Graph freshness check: `devflow.graph.refreshed` (true only when a rebuild succeeded), `.status`, `.nodes`, `.edges`, `.fingerprint` |
 | `stage.result` | Artifact success and review/blocking finding counts |
 | `workflow.summary` | Overall recorded duration, human waiting time and review rounds when a retro runs |
 | `learning.retro` | Retrospective execution time and failure status |
@@ -104,6 +105,30 @@ disable tracing for that repository.
 Each ticket invocation has a fresh trace; resumed turns share a session identifier of
 `<repository>:issue-<number>`. Repository and issue metadata propagate to child spans. This lets
 you inspect one attempt or group multiple attempts for the same ticket.
+
+### Repository and graph provenance
+
+The `ticket.run` root span (and later child spans, via `langfuse.trace.metadata.*`) carries
+bounded, allowlisted metadata, each key also mirrored as `devflow.<key>`. It is emitted in both
+metadata-only and content-capture modes:
+
+- `base_sha`: the ticket's base commit (hex), set after the worktree is created, or from the
+  stored ticket on resume.
+- `remote`: sanitized `host/owner/repo`. Userinfo, port, query and fragment are removed; an
+  unparseable remote is omitted.
+- `graph_status`, `graph_fingerprint`, `graph_nodes`, `graph_edges`: the latest graph check for
+  an agent request. The fingerprint is a 12-character hex prefix (empty outside a git repo);
+  counts are integers and only present when known.
+
+Graph states: **fresh** (no-op check, existing graph is current), **refreshed** (a rebuild
+succeeded), **failed** (the builder ran but failed; counts are 0, never shown as fresh) and
+**unavailable** (graphify missing, not a git repo, or the builder raised). A graph problem never
+stops a ticket; the agent prompt just says the code graph is unavailable.
+
+Values are validated (hex, fixed enum, non-negative integers) and invalid values are dropped.
+Graph contents, digests, prompts, issue text, file paths, error messages and credentials are
+never added to this metadata. The fingerprint changes with the working tree, so use it to
+compare traces, not as a grouping key or session id.
 
 Agent invocations are typed as agents, stages as chains, and external actions as tools.
 This avoids representing a multi-turn coding session as one model generation. Token usage and
