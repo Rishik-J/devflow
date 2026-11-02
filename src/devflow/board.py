@@ -74,6 +74,8 @@ class GhBoard:
     @telemetry.operation("tool.github_project")
     def _gh(self, *args: str) -> dict:
         proc = self._run(["gh", "project", *args])
+        telemetry.current_content(output={"stdout": proc.stdout, "stderr": proc.stderr,
+                                          "exit_code": proc.returncode})
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout).strip()
             hint = " (run `gh auth refresh -s project`)" if "scope" in err.lower() else ""

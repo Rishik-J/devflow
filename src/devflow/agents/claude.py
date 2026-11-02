@@ -39,7 +39,9 @@ class ClaudeAgent:
     def build(self, req: AgentRequest, tmp: Path) -> tuple[list[str], str, str]:
         """Return (command, stdin text, session id) for this request."""
         session = req.session or str(uuid.uuid4())
-        cmd = [self.binary, "-p", "--output-format", "json"]
+        cmd = [self.binary, "-p", "--output-format", "stream-json" if telemetry.detailed() else "json"]
+        if telemetry.detailed():
+            cmd += ["--verbose"]
         cmd += ["--resume", session] if req.session else ["--session-id", session]
 
         tools = req.allowed_tools or list(READ_TOOLS if req.read_only else WRITE_TOOLS)
@@ -68,9 +70,12 @@ class ClaudeAgent:
             cmd, stdin, session = self.build(req, Path(tmp))
             proc = self.runner(cmd, req.cwd, agent_env(("ANTHROPIC_", "CLAUDE_")),
                                req.timeout_s, stdin)
+        events = telemetry.cli_events(proc.out, "claude")
+        telemetry.current_content(output={"stderr": proc.err, "exit_code": proc.code,
+                                          "timed_out": proc.timed_out})
         if proc.timed_out:
             raise AgentTimeout(f"claude {req.role} timed out after {req.timeout_s:.0f}s")
-        data = extract_json(proc.out)
+        data = next((e for e in reversed(events) if e.get("type") == "result"), None) or extract_json(proc.out)
         if not isinstance(data, dict) or "result" not in data:
             raise AgentError(
                 f"claude {req.role}: unreadable output (exit {proc.code}): "

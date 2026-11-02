@@ -236,8 +236,9 @@ devflow telemetry metrics
 
 Open [localhost:3300](http://localhost:3300); local credentials are in
 `infra/langfuse/login.json` in the devflow checkout. Future runs in connected repositories emit
-nested spans automatically and keep a local JSONL log if export fails. Prompts, responses,
-command output and credential values are excluded. See the [observability guide](docs/observability.md)
+nested spans automatically and keep a local JSONL log if export fails. Add `--capture-content`
+to setup to record redacted prompts, responses, tool payloads and review artifacts. Content
+capture is opt-in per repository. See the [observability guide](docs/observability.md)
 for setup, replay, scope and cost-accounting details.
 
 ## Development

@@ -54,6 +54,9 @@ class CodexAgent:
             proc = self.runner(self.build(req, out_file), req.cwd,
                                agent_env(("OPENAI_", "CODEX_")), req.timeout_s, None)
             last_message = out_file.read_text() if out_file.exists() else ""
+        telemetry.cli_events(proc.out, "codex")
+        telemetry.current_content(output={"stderr": proc.err, "exit_code": proc.code,
+                                          "timed_out": proc.timed_out})
         if proc.timed_out:
             raise AgentTimeout(f"codex {req.role} timed out after {req.timeout_s:.0f}s")
 

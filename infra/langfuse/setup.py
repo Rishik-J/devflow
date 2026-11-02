@@ -1,7 +1,7 @@
 """Generate local credentials and enable tracing for explicit repository paths."""
+import argparse
 import json
 import secrets
-import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent
@@ -16,7 +16,11 @@ else:
     values["LANGFUSE_SECRET_KEY"] = "sk-lf-" + secrets.token_hex(16)
     env_file.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
     env_file.chmod(0o600)
-for arg in sys.argv[1:]:
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--capture-content", action="store_true", help="Capture redacted prompts, responses and tool payloads locally")
+parser.add_argument("repos", nargs="*")
+args = parser.parse_args()
+for arg in args.repos:
     repo = Path(arg).resolve()
     if not (repo / ".git").exists():
         raise SystemExit(f"Not a git checkout: {repo}")
@@ -26,6 +30,12 @@ for arg in sys.argv[1:]:
               "public_key": values["LANGFUSE_PUBLIC_KEY"], "secret_key": values["LANGFUSE_SECRET_KEY"],
               "log_file": str(state / "traces.jsonl")}
     target = state / "telemetry.json"
+    if target.exists():
+        previous = json.loads(target.read_text())
+        config["capture_content"] = previous.get("capture_content") is True
+        config["max_content_characters"] = previous.get("max_content_characters", 200_000)
+    if args.capture_content:
+        config["capture_content"] = True
     target.write_text(json.dumps(config, indent=2))
     target.chmod(0o600)
 login = root / "login.json"

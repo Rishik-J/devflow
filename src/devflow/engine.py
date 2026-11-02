@@ -122,10 +122,14 @@ class Engine:
             before = ticket.state
             try:
                 with telemetry.span("stage." + ticket.state.value,
-                                    {"devflow.state": ticket.state.value,
+                                    {"devflow.state": ticket.state.value, "langfuse.observation.type": "chain",
                                      "devflow.implement_attempt": ticket.implement_attempts,
                                      "devflow.review_round": ticket.review_round}) as stage:
+                    stage.content(input={"issue": issue, "state": ticket.state.value,
+                                         "implementation_attempt": ticket.implement_attempts,
+                                         "review_round": ticket.review_round})
                     self._handlers[ticket.state](ticket)
+                    stage.content(output={"next_state": ticket.state.value})
                     stage.set(**{"devflow.next_state": ticket.state.value})
             except _Wait as wait:
                 return Outcome(ticket, "paused", str(wait))
@@ -154,8 +158,11 @@ class Engine:
 
     def _move(self, ticket: Ticket, to: State, actor: str, reason: str = "") -> None:
         self.log(f"{ticket.id}: {ticket.state.value} -> {to.value} ({actor}) {reason}".strip())
+        before = ticket.state.value
         self.store.transition(ticket, to, actor=actor, reason=reason, limits=self.cfg.limits)
-        telemetry.event("state.transition", **{"devflow.state": to.value, "devflow.actor": actor})
+        telemetry.content_event("state.transition", input={"from": before, "actor": actor, "reason": reason},
+                                output={"to": to.value},
+                                attributes={"devflow.state": to.value, "devflow.actor": actor})
         self._sync_board(ticket)
 
     def _sync_board(self, ticket: Ticket) -> None:
@@ -191,7 +198,7 @@ class Engine:
             facts["devflow.blocking_findings"] = sum(bool(f.get("blocking"))
                                                     for f in payload.get("findings", []))
             facts["devflow.reviewer_independent"] = bool(payload.get("independent"))
-        telemetry.event("stage.result", **facts)
+        telemetry.content_event("stage.result", output=payload, attributes=facts)
 
     def _latest(self, ticket: Ticket, kind: str) -> dict | None:
         rows = self.store.stage_results(ticket.id, kind)

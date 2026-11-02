@@ -58,7 +58,7 @@ disable tracing for that repository.
 |---|---|
 | `ticket.run` | One invocation/resume of a ticket, final state and done/paused/escalated result |
 | `stage.*` | Stage duration, attempt number, review round, next state and waiting/error status |
-| `agent.call` | Agent tool and role, resume flag, character counts, available token usage and reported cost |
+| `agent.<driver>.<role>` | Named agent execution, handoff source/target, resume session, prompt hash, available token usage and reported cost |
 | `provider.attempt` | Devflow's OpenClaw adapter attempt; gateway-internal retries are not individually visible |
 | `schema.repair` | Number of validation errors that triggered another structured response |
 | `routing.selected` | Selected coding agent and fallback index |
@@ -74,11 +74,12 @@ Each ticket invocation has a fresh trace; resumed turns share a session identifi
 `<repository>:issue-<number>`. Repository and issue metadata propagate to child spans. This lets
 you inspect one attempt or group multiple attempts for the same ticket.
 
-The spans cover the devflow orchestration boundary. A CLI may make several internal model or
-tool calls; they are not individual spans unless the CLI exposes them through a future
-integration. Token usage and costs are whatever the CLI reports or the existing router
-estimates. OpenClaw usage may remain unmetered. Do not interpret CLI invocation counts as
-provider request counts, or the recorded cost as a billing total.
+Agent invocations are typed as agents, stages as chains, and external actions as tools.
+This avoids representing a multi-turn coding session as one model generation. Token usage and
+costs are whatever the CLI reports or the existing router estimates; OpenClaw usage may remain
+unmetered. Do not interpret CLI invocation counts as provider request counts, or recorded cost
+as a billing total. Reported aggregate usage on an agent is diagnostic; per-model Langfuse
+analytics require the individual generation data actually exposed by that CLI.
 
 ## Explore the workflow
 
@@ -119,11 +120,70 @@ Langfuse v4 ingestion header and treats OTLP partial rejections as failed export
 log is a recovery source, not an automatic unlimited retry queue. The current setup does not
 configure automatic log rotation or remote backups.
 
-Prompts, model response text, shell command text/output, environment values and exception
-messages are not exported. Exceptions record their type. Raw code and model content are not
-required for this operational tracing. Credentials for the collector are not passed into
-gate subprocesses. Operational attributes still include repo names, issue numbers, roles and
-agent names.
+## Detailed prompts, responses and tool capture
+
+Metadata-only capture remains the default. To explicitly enable content for selected repos:
+
+```bash
+python3 infra/langfuse/setup.py --capture-content /absolute/path/to/your/repo
+devflow telemetry status /absolute/path/to/your/repo
+```
+
+Setup preserves an existing content setting when rerun. To disable content while retaining
+operational tracing, set `"capture_content": false` in the repo's ignored
+`.devflow/state/telemetry.json`. New CLI processes load the setting automatically; restart an
+already-running `devflow run --watch` process to reload it. Existing records are unaffected.
+
+With content enabled, observations contain:
+
+- The supplied role/system instructions, task prompt, Graphify digest, repository brief,
+  selected lessons and schema that actually went into each agent request.
+- Final assistant responses, resume session IDs, sanitized errors, stage artifacts, plans,
+  test designs, review findings, remediation instructions, schema validation errors, state
+  transition reasons and routing preferences/selection.
+- Gate/setup commands and output, timeout and exit status, Git arguments/results, GitHub and
+  Project request arguments/body and responses. Environment dictionaries are never recorded.
+- Claude Code exposed assistant messages, correlated tool inputs/results, tool-based subagent
+  dispatches and reported per-message model/token data.
+- Codex exposed command executions/output, MCP calls/results, file changes, web searches,
+  collaboration dispatches and assistant messages.
+- Cursor stream tool inputs/results and complete assistant messages.
+
+The named agent observation itself represents the workflow handoff: it records the parent
+stage, destination agent/role, delivered context and returned result. There is no duplicate
+sibling dispatch node for that same execution. A full trace per invocation and stable ticket
+session tie planning, coding, review and subsequent resumes together.
+
+**Visibility limits:** CLI events are parsed after the subprocess completes. Internal event
+observations are explicitly marked `devflow.reconstructed=true` and
+`devflow.timing_precision=post_process`; use stage/agent spans for measured latency and the
+internal event index for stream ordering. Internal provider prompts, hidden CLI system
+instructions, compaction/history and gateway-internal retries are not exposed by these drivers.
+Claude generations explicitly label that missing request context; their visible output/model
+and reported usage are captured without pretending the entire provider request is available.
+Codex/Cursor messages are events rather than invented provider generations. OpenClaw exposes
+the delivered prompt, final payload, public run/session identifiers and available usage; its
+private internal tools and nested sessions are not harvested. A tool-based child dispatch can
+be captured without access to the child's internal execution. No hidden reasoning is collected.
+
+Content is redacted **before** both JSONL persistence and OTLP export: structured credential
+fields, known secret environment/config values, recognizable API tokens, authorization values,
+private keys and URL passwords are masked. Free-form personal/confidential information is not
+guaranteed masked. This is detailed local debugging data; the ignored logs and Langfuse Docker
+volumes contain source snippets and task content. Collector credentials are not passed to gates.
+
+Each input/output payload defaults to 200,000 characters. Set `max_content_characters` in the
+repo telemetry config to adjust it (supported range 1,000–1,000,000). Oversized payloads have
+an explicit truncated preview and original character count; operational attributes retain their
+smaller limit. Content can therefore be incomplete even when capture is enabled. Logs remain
+mode 0600 and excluded from git. Trace replay resends already-recorded content, so switching
+content off does not erase historical logs or remove content from the local Langfuse database.
+
+The existing dependency-free OTLP transport is retained rather than adding a second SDK tracer:
+it already preserves devflow's trace IDs, local recovery logs and optional/offline operation.
+Attribute mapping and observation types follow the current official Langfuse documentation.
+This application invokes external CLI agents rather than an in-process LLM SDK, so an OpenAI or
+LangChain auto-instrumentation wrapper would not reveal those subprocesses' internal requests.
 
 ## Operate and restart
 
@@ -143,6 +203,8 @@ single-machine use, without high availability.
 
 - [Langfuse Docker Compose deployment](https://langfuse.com/self-hosting/deployment/docker-compose)
 - [Headless initialization](https://langfuse.com/self-hosting/administration/headless-initialization)
+- [Tracing best practices](https://langfuse.com/docs/observability/best-practices)
+- [Official Langfuse AI skill](https://github.com/langfuse/skills)
 - [OTLP endpoint and attribute mapping](https://langfuse.com/integrations/native/opentelemetry)
 
 The local Compose configuration is based on the upstream deployment, with private generated

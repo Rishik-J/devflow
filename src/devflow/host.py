@@ -106,6 +106,8 @@ class GhHost:
     @telemetry.operation("tool.github")
     def _gh(self, *args: str, input_text: str | None = None) -> str:
         proc = self._run(["gh", *args], input_text)
+        telemetry.current_content(output={"stdout": proc.stdout, "stderr": proc.stderr,
+                                          "exit_code": proc.returncode})
         if proc.returncode != 0:
             raise HostError(f"gh {' '.join(args[:3])}: {(proc.stderr or proc.stdout).strip()[:300]}")
         return proc.stdout

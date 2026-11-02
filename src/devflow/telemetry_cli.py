@@ -18,7 +18,9 @@ def command(args):
     log = Path(config.get("log_file", root / ".devflow/state/traces.jsonl"))
     if args.telemetry_action == "status":
         print(json.dumps({"enabled": bool(config.get("enabled")), "log_file": str(log),
-                          "collector_configured": bool(config.get("endpoint"))}, indent=2))
+                          "collector_configured": bool(config.get("endpoint")),
+                          "capture_content": config.get("capture_content") is True,
+                          "max_content_characters": config.get("max_content_characters", 200_000)}, indent=2))
         return 0
     if args.telemetry_action == "demo":
         if not config.get("enabled"):
@@ -60,7 +62,7 @@ def command(args):
         if name.startswith("stage.") and name != "stage.result":
             durations[name].append((record["end_ns"] - record["start_ns"]) / 1e9)
         attributes = record["attributes"]
-        if name == "agent.call":
+        if name == "agent.call" or name.startswith("agent."):
             calls[attributes.get("devflow.agent", "unknown")] += 1
         if name == "usage.recorded":
             usage[attributes.get("devflow.agent", "unknown")] += attributes.get("devflow.cost_usd", 0)

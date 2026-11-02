@@ -89,6 +89,9 @@ class OpenClawAgent:
             message_file.write_text(self.message(req))
             proc = self.runner(self.build(req, message_file, key), req.cwd,
                                agent_env(("OPENCLAW_",)), req.timeout_s + 30, None)
+        telemetry.current_content(input={"message": self.message(req), "session": key},
+                                  output={"stderr": proc.err, "exit_code": proc.code,
+                                          "timed_out": proc.timed_out})
         if proc.timed_out:
             raise AgentTimeout(f"{self.name} {req.role} timed out after {req.timeout_s:.0f}s")
         data = extract_json(proc.out)
@@ -103,8 +106,19 @@ class OpenClawAgent:
         ).strip()
         ok = data.get("status") == "ok" and proc.code == 0
         meta = result.get("meta", {})
+        # Public metadata only. Never walk OpenClaw's other agents' private session files.
+        agent_meta = meta.get("agentMeta") or {}
+        usage = agent_meta.get("usage") or {}
+        usage = usage if isinstance(usage, dict) else {}
+        normalized = {f"{kind}_tokens": usage.get(f"{kind}_tokens", usage.get(kind, usage.get(f"{kind}Tokens")))
+                      for kind in ("input", "output")}
+        telemetry.current_content(output={"response": text, "status": data.get("status"),
+                                          "summary": data.get("summary"), "run_id": data.get("runId"),
+                                          "reported_usage": usage, "reported_model": agent_meta.get("model"),
+                                          "provider_session": agent_meta.get("sessionId")})
         return AgentResult(
             text=text, session=key, duration_s=(meta.get("durationMs") or 0) / 1000, ok=ok,
             error="" if ok else f"status={data.get('status')}: {data.get('summary') or tail(proc.err)}",
-            raw={"runId": data.get("runId"), "status": data.get("status")},
+            raw={"runId": data.get("runId"), "status": data.get("status"),
+                 "usage": normalized, "model": agent_meta.get("model")},
         )

@@ -229,9 +229,10 @@ def run_routed(
     prompt_chars = len(req.prompt) + len(req.system)
     for _ in range(len(router.agents)):
         choice = router.pick(req.role, avoid=avoid, prefer=prefer, exclude=tried)
-        telemetry.event("routing.selected", **{"devflow.agent": choice.name,
-                                              "devflow.role": req.role,
-                                              "devflow.fallback_index": len(tried)})
+        telemetry.content_event("routing.selected", input={"preferred": prefer, "already_tried": tried},
+                                output={"selected": choice.name, "reason": getattr(choice, "reason", "router priority and available headroom")},
+                                attributes={"devflow.agent": choice.name, "devflow.role": req.role,
+                                            "devflow.fallback_index": len(tried)})
         this = req if (prefer is None or choice.name == prefer) else _with(req, session=None)
         try:
             if structured:

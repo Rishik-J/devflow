@@ -28,6 +28,8 @@ def git(path: Path, *args: str, check: bool = True, timeout: int = 120) -> str:
         ["git", *BOT, "-C", str(path), *args], capture_output=True, text=True, timeout=timeout,
         check=False,
     )
+    telemetry.current_content(output={"stdout": proc.stdout, "stderr": proc.stderr,
+                                      "exit_code": proc.returncode})
     if check and proc.returncode != 0:
         raise GitError(f"git {' '.join(args[:3])}: {(proc.stderr or proc.stdout).strip()[:300]}")
     return proc.stdout

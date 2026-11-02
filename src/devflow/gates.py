@@ -125,21 +125,27 @@ def run_command(
     command: str, cwd: Path, timeout_s: float, env: dict[str, str] | None = None
 ) -> tuple[int | None, str, bool]:
     """Run a shell command in its own process group; kill the whole group on timeout."""
-    proc = subprocess.Popen(
-        ["/bin/sh", "-c", command], cwd=cwd, env=env if env is not None else scrubbed_env(),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
-    )
-    try:
-        with telemetry.span("tool.shell", {"devflow.command_kind": "gate_or_setup"}) as trace:
+    with telemetry.span("tool.shell", {"devflow.command_kind": "gate_or_setup",
+                                       "langfuse.observation.type": "tool"}) as trace:
+        trace.content(input={"command": command, "cwd": str(cwd), "timeout_s": timeout_s})
+        proc = subprocess.Popen(
+            ["/bin/sh", "-c", command], cwd=cwd, env=env if env is not None else scrubbed_env(),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+        )
+        try:
             out, _ = proc.communicate(timeout=timeout_s)
             trace.set(**{"process.exit_code": proc.returncode})
+            trace.content(output={"output": out, "exit_code": proc.returncode, "timed_out": False})
             if proc.returncode != 0:
                 trace.fail()
             return proc.returncode, out, False
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        out, _ = proc.communicate()
-        return None, out or "", True
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            out, _ = proc.communicate()
+            trace.content(output={"output": out or "", "timed_out": True})
+            trace.set(**{"devflow.timed_out": True})
+            trace.fail()
+            return None, out or "", True
 
 
 def run_gates(

@@ -117,7 +117,7 @@ def test_full_ticket_emits_stage_agent_gate_and_state_spans(capture, tmp_path):
         env.engine().run(1)
         records = rows(capture)
         names = {r["name"] for r in records}
-        assert {"ticket.run", "stage.refining", "agent.call", "gate.result", "state.transition", "tool.git"} <= names
+        assert {"ticket.run", "stage.refining", "agent.fake.planner", "gate.result", "state.transition", "tool.git"} <= names
         stages = [r for r in records if r["name"].startswith("stage.")]
         assert any(r["status"] == "waiting" for r in stages)
         roots = [r for r in records if r["name"] == "ticket.run"]
@@ -135,3 +135,155 @@ def test_malformed_config_cannot_break_workflow(tmp_path, monkeypatch, capsys):
         pass
     assert not telemetry._settings["enabled"]
     assert "tracing disabled" in capsys.readouterr().err
+
+
+@pytest.fixture
+def detailed_capture(capture):
+    telemetry.configure(settings={"enabled": True, "capture_content": True, "log_file": str(capture),
+                                  "secret_key": "test-collector-secret-value"})
+    return capture
+
+
+def test_detailed_agent_records_prompts_handoff_response_and_redacts_secrets(detailed_capture, tmp_path, monkeypatch):
+    monkeypatch.setenv("OTHER_API_KEY", "known-environment-secret-value")
+    agent = FakeAgent({"coder": [AgentResult(text="Done. password=secretword", session="resume-1")]})
+    with telemetry.span("stage.implementing"):
+        agent.run(AgentRequest("coder", "Implement addition known-environment-secret-value", tmp_path,
+                               system="System instructions", session="resume-0"))
+    record = next(r for r in rows(detailed_capture) if r["name"].startswith("agent."))
+    attrs = record["attributes"]
+    assert attrs["langfuse.observation.type"] == "agent"
+    assert attrs["devflow.handoff.from"] == "stage.implementing"
+    assert json.loads(attrs["langfuse.observation.input"])["system"] == "System instructions"
+    assert json.loads(attrs["langfuse.observation.output"])["session"] == "resume-1"
+    text = detailed_capture.read_text()
+    assert "known-environment-secret-value" not in text and "secretword" not in text
+    assert "Implement addition" in text and "Done." in text
+
+
+def test_payload_redaction_and_visible_truncation(detailed_capture):
+    telemetry._settings["max_content_characters"] = 1000
+    telemetry.content_event("payload", input={"api_key": "arbitrarysecret", "nested": {"token": "sensitive"},
+                                             "text": "Bearer abcdefghijklmnop " + "x" * 2000})
+    record = rows(detailed_capture)[0]
+    assert record["attributes"]["devflow.input_truncated"]
+    payload = json.loads(record["attributes"]["langfuse.observation.input"])
+    assert payload["truncated"] and payload["original_characters"] > 1000
+    assert "arbitrarysecret" not in detailed_capture.read_text() and "abcdefghijklmnop" not in detailed_capture.read_text()
+
+
+def test_claude_stream_captures_model_usage_and_correlated_tools(detailed_capture, tmp_path):
+    from devflow.agents import ClaudeAgent
+    from devflow.agents.base import ProcResult
+    from tests.test_agents import CLAUDE_OK, Recorder
+    events = [
+        {"type": "assistant", "message": {"id": "msg-1", "model": "test-model", "usage": {"input_tokens": 30, "output_tokens": 10},
+         "content": [{"type": "tool_use", "id": "tool-1", "name": "Read", "input": {"path": "calc.py"}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "def add(a,b): return a+b"}]}},
+        json.loads(CLAUDE_OK),
+    ]
+    runner = Recorder(ProcResult(0, "\n".join(json.dumps(e) for e in events), ""))
+    result = ClaudeAgent(runner=runner).run(AgentRequest("coder", "Inspect calc.py", tmp_path))
+    assert result.ok and result.session == "sess-1"
+    assert "stream-json" in runner.calls[0]["cmd"] and "--verbose" in runner.calls[0]["cmd"]
+    records = rows(detailed_capture)
+    agent = next(r for r in records if r["name"] == "agent.claude.coder")
+    tool = next(r for r in records if r["name"] == "cli.tool.Read")
+    generation = next(r for r in records if r["name"] == "cli.claude.generation")
+    assert tool["parent_id"] == generation["parent_id"] == agent["span_id"]
+    assert "def add" in tool["attributes"]["langfuse.observation.output"]
+    assert generation["attributes"]["langfuse.observation.model.name"] == "test-model"
+    assert json.loads(generation["attributes"]["langfuse.observation.usage_details"])["input"] == 30
+    assert generation["attributes"]["devflow.reconstructed"]
+
+
+def test_codex_command_and_cursor_tool_payloads(detailed_capture):
+    with telemetry.span("agent.codex.coder") as parent:
+        telemetry.cli_events(json.dumps({"type": "item.completed", "item": {"id": "command-1", "type": "command_execution",
+            "command": "python -m pytest", "aggregated_output": "3 passed", "exit_code": 0}}), "codex")
+        telemetry.cli_events("\n".join(json.dumps(e) for e in [
+            {"type": "tool_call", "subtype": "started", "call_id": "cursor-1", "tool_call": {"readToolCall": {"args": {"path": "a.py"}}}},
+            {"type": "tool_call", "subtype": "completed", "call_id": "cursor-1", "tool_call": {"readToolCall": {"result": {"success": {"content": "a = 1"}}}}},
+        ]), "cursor")
+    records = rows(detailed_capture)
+    assert all(r["parent_id"] == parent.span_id for r in records if r["name"].startswith("cli."))
+    assert "3 passed" in detailed_capture.read_text() and "a = 1" in detailed_capture.read_text()
+    assert "python -m pytest" in detailed_capture.read_text()
+
+
+def test_gate_failure_and_timeout_capture_output(detailed_capture, tmp_path):
+    from devflow.gates import run_command
+    code, out, timeout = run_command("printf 'test failure password=hiddenvalue'; exit 2", tmp_path, 3)
+    assert code == 2 and not timeout and "test failure" in out
+    code, out, timeout = run_command("printf 'before timeout'; sleep 5", tmp_path, .05)
+    assert timeout
+    records = rows(detailed_capture)
+    assert all(r["status"] == "error" for r in records)
+    assert "test failure" in detailed_capture.read_text() and "hiddenvalue" not in detailed_capture.read_text()
+    assert "before timeout" in detailed_capture.read_text()
+
+
+def test_metadata_only_mode_does_not_record_cli_content_or_enable_streams(capture, tmp_path):
+    from devflow.agents import ClaudeAgent
+    from devflow.agents.base import ProcResult
+    from tests.test_agents import CLAUDE_OK, Recorder
+    runner = Recorder(ProcResult(0, CLAUDE_OK, "private stderr"))
+    ClaudeAgent(runner=runner).run(AgentRequest("coder", "private prompt", tmp_path))
+    assert "stream-json" not in runner.calls[0]["cmd"]
+    assert "private" not in capture.read_text()
+    assert not any("langfuse.observation.input" in r["attributes"] for r in rows(capture))
+
+
+@pytest.mark.parametrize("value,secret", [
+    ({"text": 'password="many secret words"'}, "many secret words"),
+    (["--api-key", "unrecognized-secret-value"], "unrecognized-secret-value"),
+    ({"text": "https://name:passphrase@example.com/"}, "passphrase"),
+    ({"text": "-----BEGIN PRIVATE KEY-----\nrawkey\n-----END PRIVATE KEY-----"}, "rawkey"),
+])
+def test_redaction_handles_common_credential_forms(detailed_capture, value, secret):
+    telemetry.content_event("redaction-check", input=value)
+    assert secret not in detailed_capture.read_text()
+
+
+def test_unknown_cli_event_shape_cannot_break_agent_result(detailed_capture):
+    events = telemetry.cli_events('{"type":"item.completed","item":null}', "codex")
+    assert len(events) == 1
+
+
+def test_cursor_stream_tool_text_cannot_trigger_false_login_failure(detailed_capture, tmp_path):
+    from devflow.agents.base import ProcResult
+    from devflow.agents.cursor import CursorAgent
+    from tests.test_agents import Recorder
+    stream = "\n".join(json.dumps(e) for e in [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "Source says not logged in"}]}},
+        {"type": "result", "subtype": "success", "result": "Inspected", "session_id": "chat-1"},
+    ])
+    runner = Recorder(ProcResult(0, stream, ""))
+    result = CursorAgent(runner=runner).run(AgentRequest("reviewer", "Read auth.py", tmp_path))
+    assert result.ok and result.text == "Inspected"
+    assert "stream-json" in runner.calls[0]["cmd"]
+
+
+def test_incomplete_cursor_stream_cannot_be_treated_as_success(detailed_capture, tmp_path):
+    from devflow.agents.base import AgentError, ProcResult
+    from devflow.agents.cursor import CursorAgent
+    from tests.test_agents import Recorder
+    runner = Recorder(ProcResult(0, '{"type":"system","subtype":"init"}', ""))
+    with pytest.raises(AgentError, match="unreadable"):
+        CursorAgent(runner=runner).run(AgentRequest("reviewer", "Inspect", tmp_path))
+
+
+def test_openclaw_reports_public_usage_without_reading_other_sessions(detailed_capture, tmp_path):
+    from devflow.agents import OpenClawAgent
+    from devflow.agents.base import ProcResult
+    from tests.test_agents import OPENCLAW_OK, Recorder
+    reply = json.loads(OPENCLAW_OK)
+    reply["result"]["meta"]["agentMeta"] = {"model": "test-model", "usage": {"input": 24, "output": 6}, "sessionId": "provider-1"}
+    agent = OpenClawAgent("devflow", runner=Recorder(ProcResult(0, json.dumps(reply), "")))
+    result = agent.run(AgentRequest("planner", "Plan the task", tmp_path))
+    assert result.raw["usage"] == {"input_tokens": 24, "output_tokens": 6}
+    records = rows(detailed_capture)
+    call = next(r for r in records if r["name"] == "agent.openclaw:devflow.planner")
+    assert call["attributes"]["devflow.reported_model"] == "test-model"
+    assert call["attributes"]["gen_ai.usage.input_tokens"] == 24
+    assert "provider-1" in detailed_capture.read_text()

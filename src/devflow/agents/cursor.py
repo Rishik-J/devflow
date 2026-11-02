@@ -62,7 +62,7 @@ class CursorAgent:
         return ok, why
 
     def build(self, req: AgentRequest) -> list[str]:
-        cmd = [self.binary, "-p", "--trust", "--output-format", "json"]
+        cmd = [self.binary, "-p", "--trust", "--output-format", "stream-json" if telemetry.detailed() else "json"]
         if req.read_only:
             cmd += ["--mode", "ask"]
         else:
@@ -77,13 +77,17 @@ class CursorAgent:
     @telemetry.agent_call
     def run(self, req: AgentRequest) -> AgentResult:
         proc = self.runner(self.build(req), req.cwd, agent_env(("CURSOR_",)), req.timeout_s, None)
+        events = telemetry.cli_events(proc.out, "cursor")
+        telemetry.current_content(output={"stderr": proc.err, "exit_code": proc.code,
+                                          "timed_out": proc.timed_out})
         if proc.timed_out:
             raise AgentTimeout(f"cursor {req.role} timed out after {req.timeout_s:.0f}s")
+        data = next((e for e in reversed(events) if e.get("type") == "result"), None) or extract_json(proc.out)
+        # Tool results can quote login errors from source files. They are not auth failures.
         combined = (proc.out + "\n" + proc.err).lower()
-        if any(s in combined for s in _NOT_LOGGED_IN):
+        if (proc.code != 0 or data is None) and any(s in combined for s in _NOT_LOGGED_IN):
             raise AgentError(LOGIN_HINT)
-        data = extract_json(proc.out)
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or not any(key in data for key in ("result", "text", "response")):
             raise AgentError(
                 f"cursor {req.role}: unreadable output (exit {proc.code}): "
                 f"{tail(proc.err or proc.out)}"
