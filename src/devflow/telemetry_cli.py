@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -107,9 +108,16 @@ def _is_number(value):
 
 def _seconds(record):
     start, end = record.get("start_ns"), record.get("end_ns")
-    if not (_is_number(start) and _is_number(end)) or end < start:
+    if not (_is_number(start) and _is_number(end)):
         return None
-    return (end - start) / 1e9
+    try:
+        start, end = float(start), float(end)
+        seconds = (end - start) / 1e9
+    except OverflowError:
+        return None
+    if not (math.isfinite(start) and math.isfinite(end) and math.isfinite(seconds)) or end < start:
+        return None
+    return seconds
 
 
 _ISSUE_SESSION = re.compile(r"(?:^|:)issue-(\d+)$")
@@ -160,7 +168,7 @@ def _session_summary(session, records):
             runs += 1
             outcomes[str(_attrs(record).get("devflow.result", record.get("status")))] += 1
             if seconds is not None:
-                intervals.append((record["start_ns"] / 1e9, record["end_ns"] / 1e9))
+                intervals.append((float(record["start_ns"]) / 1e9, float(record["end_ns"]) / 1e9))
         elif name.startswith("stage.") and name != "stage.result":
             if seconds is not None:
                 stages[name].append(seconds)
@@ -201,11 +209,23 @@ def issue_summary(records, issue):
 
 
 def issue_metrics(records, issue):
+    """Issue-mode output is built only from span names, counts, durations and outcome names."""
     sessions = issue_summary(records, issue)
-    selected = [r for r in records if isinstance(r, dict) and not _is_synthetic(r) and _matches_issue(r, issue)]
-    out = aggregate(selected, strict=False)
-    out["synthetic_spans_excluded"] = sum(1 for r in records if isinstance(r, dict) and _is_synthetic(r))
-    out["issue"] = issue
-    out["labels"] = LABELS
-    out["sessions"] = sessions
-    return out
+    outcomes, calls, stages = Counter(), Counter(), defaultdict(list)
+    for record in records:
+        if not isinstance(record, dict) or _is_synthetic(record) or not _matches_issue(record, issue):
+            continue
+        name = str(record.get("name", ""))
+        seconds = _seconds(record)
+        if name == "ticket.run":
+            outcomes[str(_attrs(record).get("devflow.result", record.get("status")))] += 1
+        elif name.startswith("agent."):
+            calls[name[len("agent."):]] += 1
+        elif name.startswith("stage.") and name != "stage.result" and seconds is not None:
+            stages[name].append(seconds)
+    return {"issue": issue, "spans": sum(s["spans"] for s in sessions),
+            "synthetic_spans_excluded": sum(1 for r in records if isinstance(r, dict) and _is_synthetic(r)),
+            "ticket_turn_outcomes": dict(outcomes), "agent_cli_calls": dict(calls),
+            "coding_cost_usd_recorded": {},
+            "stage_latency_seconds": {n: _stats(v) for n, v in stages.items()},
+            "labels": LABELS, "sessions": sessions}

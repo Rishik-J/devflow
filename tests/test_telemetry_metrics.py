@@ -122,10 +122,12 @@ def test_privacy(tmp_path, capsys):
                                      "langfuse.observation.output": "SECRET-OUTPUT",
                                      "devflow.prompt_hash": "hash-9f9f", "devflow.agent_session": "sess-abc123"}),
                span("agent.claude.coder", **{"langfuse.observation.input": "SECRET-PROMPT-TEXT",
-                                             "devflow.agent_session_id": "sess-abc123"})]
+                                             "devflow.agent_session_id": "sess-abc123",
+                                             "devflow.agent": "PRIVATE-ATTRIBUTE-VALUE"}),
+               span("usage.recorded", **{"devflow.agent": "PRIVATE-ATTRIBUTE-VALUE", "devflow.cost_usd": 1})]
     code, out = run_metrics(tmp_path, capsys, records, "--issue", "1")
     assert code == 0
-    for secret in ("SECRET-PROMPT-TEXT", "SECRET-OUTPUT", "hash-9f9f", "sess-abc123"):
+    for secret in ("SECRET-PROMPT-TEXT", "SECRET-OUTPUT", "PRIVATE-ATTRIBUTE-VALUE", "hash-9f9f", "sess-abc123"):
         assert secret not in out.out
 
 
@@ -151,5 +153,21 @@ def test_malformed_and_incomplete_records(tmp_path, capsys):
     code, out = run_metrics(tmp_path, capsys, None, "--issue", "1", raw=raw)
     assert code == 0
     (session,) = json.loads(out.out)["sessions"]
+    assert session["runs"] == 2 and session["active_run_seconds"] == 10.0
+    assert session["stage_latency_seconds"] == {}
+
+
+def test_non_finite_timestamps_yield_strict_json(tmp_path, capsys):
+    attrs = '"attributes": {"langfuse.session.id": "repo:issue-1"}'
+
+    def line(name, start, end):
+        return f'{{"name": "{name}", "start_ns": {start}, "end_ns": {end}, {attrs}}}'
+
+    raw = [line("ticket.run", 0, "1e309"), line("stage.plan", "NaN", 5),
+           line("stage.plan", 0, "9" * 400), json.dumps(span("ticket.run", 0, 10))]
+    code, out = run_metrics(tmp_path, capsys, None, "--issue", "1", raw=raw)
+    assert code == 0
+    data = json.loads(out.out, parse_constant=lambda c: pytest.fail(c))
+    (session,) = data["sessions"]
     assert session["runs"] == 2 and session["active_run_seconds"] == 10.0
     assert session["stage_latency_seconds"] == {}
