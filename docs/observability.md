@@ -128,6 +128,7 @@ For a quick local aggregate:
 
 ```bash
 devflow telemetry metrics
+devflow telemetry metrics --issue 12
 devflow stats
 ```
 
@@ -135,6 +136,17 @@ devflow stats
 recorded coding cost and ticket-turn outcomes. It excludes synthetic demo spans. `stats` reads
 the durable workflow database and summarizes tickets, reviews and lessons. Neither command
 requires a model call.
+
+`telemetry metrics --issue N` reports one ticket's latency from the sessions named
+`<repo>:issue-N` (exact issue number; `issue-1` never matches `issue-12`). Each session gets one
+summary combining all resumed invocations: `runs` and `outcomes` from `ticket.run` spans,
+`active_run_seconds` (observed span time, overlapping runs merged), `elapsed_wall_seconds`
+(observed, first run start to last run end) and `inferred_gap_seconds` (inferred: elapsed minus
+active, never negative; human wait time outside the recorded runs is not observable). It also
+reports stage and agent duration count/mean/max and agent call counts. Output contains only
+counts, durations, outcome names and span names, never prompts, outputs, hashes or agent session
+ids. Synthetic spans are excluded and counted. With no spans for the issue, zeroed output is
+printed.
 
 ## Logs and export failures
 

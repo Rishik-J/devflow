@@ -244,6 +244,7 @@ From your devflow source checkout:
 cd /absolute/path/to/your/repo
 devflow telemetry demo
 devflow telemetry metrics
+devflow telemetry metrics --issue 12   # per-ticket latency summary
 ```
 
 The setup image, Compose stack and tracing integration are included in this repository.

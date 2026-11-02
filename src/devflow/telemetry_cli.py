@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -51,26 +52,160 @@ def command(args):
             raise ValueError("collector unavailable; local records were not removed") from exc
         print(f"Replayed {min(len(records), args.limit)} locally retained spans")
         return 0
+    if args.issue is not None:
+        if args.issue < 1:
+            raise ValueError("issue must be a positive integer")
+        print(json.dumps(issue_metrics(records, args.issue), indent=2))
+        return 0
+    print(json.dumps(aggregate(records), indent=2))
+    return 0
+
+
+def _stats(values):
+    return {"count": len(values), "mean": round(sum(values) / len(values), 3), "max": round(max(values), 3)}
+
+
+def aggregate(records, strict=True):
+    """Aggregate metrics over all records. ``strict`` keeps the original behaviour for the plain command."""
     durations = defaultdict(list)
     calls, usage, outcomes = Counter(), Counter(), Counter()
     synthetic = 0
     for record in records:
-        name = record["name"]
-        if record["attributes"].get("langfuse.trace.metadata.synthetic") == "true":
+        if not strict and not isinstance(record, dict):
+            continue
+        name = record["name"] if strict else str(record.get("name", ""))
+        attributes = record["attributes"] if strict else _attrs(record)
+        if attributes.get("langfuse.trace.metadata.synthetic") == "true":
             synthetic += 1
             continue
         if name.startswith("stage.") and name != "stage.result":
-            durations[name].append((record["end_ns"] - record["start_ns"]) / 1e9)
-        attributes = record["attributes"]
+            if strict:
+                durations[name].append((record["end_ns"] - record["start_ns"]) / 1e9)
+            else:
+                seconds = _seconds(record)
+                if seconds is not None:
+                    durations[name].append(seconds)
         if name == "agent.call" or name.startswith("agent."):
             calls[attributes.get("devflow.agent", "unknown")] += 1
         if name == "usage.recorded":
             usage[attributes.get("devflow.agent", "unknown")] += attributes.get("devflow.cost_usd", 0)
         if name == "ticket.run":
-            outcomes[attributes.get("devflow.result", record["status"])] += 1
-    print(json.dumps({"spans": len(records), "synthetic_spans_excluded": synthetic, "ticket_turn_outcomes": dict(outcomes),
-                      "agent_cli_calls": dict(calls), "coding_cost_usd_recorded": dict(usage),
-                      "stage_latency_seconds": {
-                          name: {"count": len(values), "mean": round(sum(values)/len(values), 3),
-                                 "max": round(max(values), 3)} for name, values in durations.items()}}, indent=2))
-    return 0
+            outcomes[attributes.get("devflow.result", record.get("status"))] += 1
+    return {"spans": len(records), "synthetic_spans_excluded": synthetic, "ticket_turn_outcomes": dict(outcomes),
+            "agent_cli_calls": dict(calls), "coding_cost_usd_recorded": dict(usage),
+            "stage_latency_seconds": {name: _stats(values) for name, values in durations.items()}}
+
+
+def _attrs(record):
+    attributes = record.get("attributes")
+    return attributes if isinstance(attributes, dict) else {}
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _seconds(record):
+    start, end = record.get("start_ns"), record.get("end_ns")
+    if not (_is_number(start) and _is_number(end)) or end < start:
+        return None
+    return (end - start) / 1e9
+
+
+_ISSUE_SESSION = re.compile(r"(?:^|:)issue-(\d+)$")
+
+
+def _is_synthetic(record):
+    attributes = _attrs(record)
+    return (attributes.get("langfuse.trace.metadata.synthetic") == "true"
+            or attributes.get("langfuse.session.id") == "devflow-connectivity-demo")
+
+
+def _matches_issue(record, issue):
+    attributes = _attrs(record)
+    session = attributes.get("langfuse.session.id")
+    if isinstance(session, str):
+        found = _ISSUE_SESSION.search(session)
+        if found and int(found.group(1)) == issue:
+            return True
+    for key in ("langfuse.trace.metadata.issue", "devflow.issue"):
+        value = attributes.get(key)
+        if not isinstance(value, bool) and str(value) == str(issue):
+            return True
+    return False
+
+
+def _merged_seconds(intervals):
+    total, current_end, current_start = 0.0, None, None
+    for start, end in sorted(intervals):
+        if current_end is None or start > current_end:
+            if current_end is not None:
+                total += current_end - current_start
+            current_start, current_end = start, end
+        else:
+            current_end = max(current_end, end)
+    if current_end is not None:
+        total += current_end - current_start
+    return total
+
+
+def _session_summary(session, records):
+    outcomes, agent_calls = Counter(), Counter()
+    stages, agents = defaultdict(list), defaultdict(list)
+    intervals, runs = [], 0
+    for record in records:
+        name = str(record.get("name", ""))
+        seconds = _seconds(record)
+        if name == "ticket.run":
+            runs += 1
+            outcomes[str(_attrs(record).get("devflow.result", record.get("status")))] += 1
+            if seconds is not None:
+                intervals.append((record["start_ns"] / 1e9, record["end_ns"] / 1e9))
+        elif name.startswith("stage.") and name != "stage.result":
+            if seconds is not None:
+                stages[name].append(seconds)
+        elif name.startswith("agent."):
+            key = name[len("agent."):]
+            agent_calls[key] += 1
+            if seconds is not None:
+                agents[key].append(seconds)
+    active = elapsed = gap = None
+    if intervals:
+        active = _merged_seconds(intervals)
+        elapsed = max(end for _, end in intervals) - min(start for start, _ in intervals)
+        gap = max(0.0, elapsed - active)
+        active, elapsed, gap = round(active, 3), round(elapsed, 3), round(gap, 3)
+    return {"session": session, "spans": len(records), "runs": runs, "outcomes": dict(outcomes),
+            "active_run_seconds": active, "elapsed_wall_seconds": elapsed, "inferred_gap_seconds": gap,
+            "stage_latency_seconds": {n: _stats(v) for n, v in stages.items()},
+            "agent_latency_seconds": {n: _stats(v) for n, v in agents.items()},
+            "agent_calls": dict(agent_calls)}
+
+
+LABELS = {
+    "active_run_seconds": "observed: ticket.run span time, overlapping runs merged",
+    "elapsed_wall_seconds": "observed: first ticket.run start to last ticket.run end",
+    "inferred_gap_seconds": "inferred: elapsed minus active, i.e. time between invocations",
+}
+
+
+def issue_summary(records, issue):
+    """Per-session summaries for one issue. Reads only whitelisted fields; never copies attribute values."""
+    sessions = defaultdict(list)
+    for record in records:
+        if not isinstance(record, dict) or _is_synthetic(record) or not _matches_issue(record, issue):
+            continue
+        session = _attrs(record).get("langfuse.session.id")
+        sessions[session if isinstance(session, str) else f"issue-{issue}"].append(record)
+    return [_session_summary(name, rows) for name, rows in sorted(sessions.items())]
+
+
+def issue_metrics(records, issue):
+    sessions = issue_summary(records, issue)
+    selected = [r for r in records if isinstance(r, dict) and not _is_synthetic(r) and _matches_issue(r, issue)]
+    out = aggregate(selected, strict=False)
+    out["synthetic_spans_excluded"] = sum(1 for r in records if isinstance(r, dict) and _is_synthetic(r))
+    out["issue"] = issue
+    out["labels"] = LABELS
+    out["sessions"] = sessions
+    return out
