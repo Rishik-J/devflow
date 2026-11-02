@@ -10,7 +10,7 @@ Repository-aware engineering workflows, orchestrated with OpenClaw and executed 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[Get started](#quick-start) · [Setup guide](docs/getting-started.md) · [Architecture](DESIGN.md) · [Contributing](CONTRIBUTING.md)
+[Get started](#quick-start) · [Setup guide](docs/getting-started.md) · [Local tracing](#local-traces-and-workflow-metrics) · [Architecture](DESIGN.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -30,6 +30,7 @@ Plans and merges require your approval by default. After a run, devflow captures
 - **Independent verification.** Run gates in a separate checkout, compare failures against the base commit, and return review findings to the coder.
 - **Durable progress.** SQLite records transitions, artifacts and sessions so interrupted tickets can resume.
 - **Bounded execution.** Review caps, run limits, exclusive repo ownership and a STOP file keep the loop manageable.
+- **Local observability in one command.** Start the bundled Langfuse stack with Docker to inspect prompts, responses, exposed tool calls, agent handoffs, review loops and recorded usage. Traces stay on your machine, with credential redaction and persistent storage.
 - **Repository learning.** Keep lessons with ticket evidence, select them by role and file scope, and publish context updates through pull requests.
 
 ## How it works
@@ -221,8 +222,19 @@ The default run limits are ten distinct tickets and sixty minutes. A lock shared
 
 ## Local traces and workflow metrics
 
-Run Langfuse on Docker to inspect ticket timelines, stage latency, agent invocations, retries,
-gate results, review loops and recorded usage:
+**Understand every stage of the ticket loop with local Langfuse tracing.** The Docker setup
+ships with devflow, so everyone cloning the repo can start the same observability stack with
+one command. No Langfuse Cloud account or hosting subscription is needed.
+
+| Inspect | What you can learn |
+|---|---|
+| Prompts, role instructions, repository context and responses | What context each agent received and what it returned |
+| Agent handoffs and exposed tool inputs/outputs | How planning, implementation and review passed work between agents |
+| Review findings, fixes, validation errors and gate output | Why a change failed verification or needed another round |
+| Stage timings, retries, routing decisions and available token/cost data | Where time and recorded usage went |
+| Ticket sessions across resumed runs | How a ticket progressed through approvals, retries and completion |
+
+From your devflow source checkout:
 
 ```bash
 # From this source checkout; Docker handles credentials and all observability services:
@@ -243,7 +255,20 @@ Open [localhost:3300](http://localhost:3300); local credentials are in
 `infra/langfuse/login.json` in the devflow checkout. Add `--capture-content` to record redacted
 prompts, responses, tool payloads and review artifacts; omit it for metadata-only capture in a
 new repository. Existing capture settings are preserved. Named Docker volumes retain traces.
-Use `./scripts/observability status`, `stop`, or `logs` to manage the stack.
+Manage the stack from the devflow checkout:
+
+```bash
+./scripts/observability status
+./scripts/observability logs
+./scripts/observability stop
+```
+
+Stopping the stack preserves traces and account data. Re-running `up` reuses existing local
+credentials. For multiple target repos, pass their paths after `--capture-content`.
+
+Capture follows what each CLI exposes: private OpenClaw internals are unavailable, reconstructed
+CLI events are labelled, and oversized content is explicitly truncated. Usage and costs may be
+partial or estimated. See the guide for the capture boundaries.
 
 Devflow and its authenticated coding agents run on the host; this Docker bundle supplies
 observability. See the [observability guide](docs/observability.md) for setup, replay, scope
