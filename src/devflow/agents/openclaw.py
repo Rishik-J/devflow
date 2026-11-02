@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from .. import telemetry
 from .base import (
     AgentError,
     AgentRequest,
@@ -67,6 +68,7 @@ class OpenClawAgent:
             cmd += ["--model", req.model]
         return cmd
 
+    @telemetry.agent_call
     def run(self, req: AgentRequest) -> AgentResult:
         key = self.session_key(req)
         last: Exception | None = None
@@ -74,7 +76,8 @@ class OpenClawAgent:
             if attempt:
                 self.sleep(self.retry_delay_s)
             try:
-                return self._once(req, key)
+                with telemetry.span("provider.attempt", {"devflow.retry_index": attempt}):
+                    return self._once(req, key)
             except AgentError as exc:
                 last = exc
         assert last is not None

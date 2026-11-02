@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import telemetry
 from .graphify import GraphResult, build_graph
 
 GRAPH_DIR = "graphify-out"
@@ -77,6 +78,7 @@ class GraphStatus:
     message: str = ""
 
 
+@telemetry.operation("graph.refresh")
 def ensure_fresh(
     root: Path, *, force: bool = False,
     builder: Callable[[Path], GraphResult] = build_graph,

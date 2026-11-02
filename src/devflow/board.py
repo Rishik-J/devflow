@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from . import telemetry
 from .states import State
 
 
@@ -70,6 +71,7 @@ class GhBoard:
         self._run = runner
         self._meta: dict | None = None
 
+    @telemetry.operation("tool.github_project")
     def _gh(self, *args: str) -> dict:
         proc = self._run(["gh", "project", *args])
         if proc.returncode != 0:

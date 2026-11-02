@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
+from . import telemetry
+
 STATUS_MARKER = "<!-- devflow:status -->"
 
 
@@ -101,6 +103,7 @@ class GhHost:
         self._run = runner
         self._user: str | None = None
 
+    @telemetry.operation("tool.github")
     def _gh(self, *args: str, input_text: str | None = None) -> str:
         proc = self._run(["gh", *args], input_text)
         if proc.returncode != 0:

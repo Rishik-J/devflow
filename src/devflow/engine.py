@@ -20,7 +20,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import baseline, commands, diffguard, followups, gitops, graphctx, prompts, worktree
+from . import (
+    baseline,
+    commands,
+    diffguard,
+    followups,
+    gitops,
+    graphctx,
+    prompts,
+    telemetry,
+    worktree,
+)
 from .agents import Agent, AgentError, AgentRequest, AgentResult, run_structured
 from .board import Board, BoardError, status_for
 from .context import ledger_path, load_brief
@@ -95,6 +105,7 @@ class Engine:
 
     # ------------------------------------------------------------------ driving
 
+    @telemetry.ticket_run
     def run(self, issue: int) -> Outcome:
         ticket = self.store.get_ticket(f"#{issue}")
         if ticket is None:
@@ -110,7 +121,12 @@ class Engine:
                 return Outcome(ticket, "done", ticket.state.value)
             before = ticket.state
             try:
-                self._handlers[ticket.state](ticket)
+                with telemetry.span("stage." + ticket.state.value,
+                                    {"devflow.state": ticket.state.value,
+                                     "devflow.implement_attempt": ticket.implement_attempts,
+                                     "devflow.review_round": ticket.review_round}) as stage:
+                    self._handlers[ticket.state](ticket)
+                    stage.set(**{"devflow.next_state": ticket.state.value})
             except _Wait as wait:
                 return Outcome(ticket, "paused", str(wait))
             except NoAgentAvailable as exc:
@@ -139,6 +155,7 @@ class Engine:
     def _move(self, ticket: Ticket, to: State, actor: str, reason: str = "") -> None:
         self.log(f"{ticket.id}: {ticket.state.value} -> {to.value} ({actor}) {reason}".strip())
         self.store.transition(ticket, to, actor=actor, reason=reason, limits=self.cfg.limits)
+        telemetry.event("state.transition", **{"devflow.state": to.value, "devflow.actor": actor})
         self._sync_board(ticket)
 
     def _sync_board(self, ticket: Ticket) -> None:
@@ -168,6 +185,13 @@ class Engine:
     def _put(self, ticket: Ticket, kind: str, payload: dict, ok: bool = True) -> None:
         attempt = len(self.store.stage_results(ticket.id, kind)) + 1
         self.store.add_stage_result(ticket.id, kind, attempt, ok, payload)
+        facts = {"devflow.artifact": kind, "devflow.ok": ok, "devflow.attempt": attempt}
+        if kind == "review":
+            facts["devflow.review_findings"] = len(payload.get("findings", []))
+            facts["devflow.blocking_findings"] = sum(bool(f.get("blocking"))
+                                                    for f in payload.get("findings", []))
+            facts["devflow.reviewer_independent"] = bool(payload.get("independent"))
+        telemetry.event("stage.result", **facts)
 
     def _latest(self, ticket: Ticket, kind: str) -> dict | None:
         rows = self.store.stage_results(ticket.id, kind)
@@ -672,6 +696,12 @@ class Engine:
             return
         try:
             record = capture(self.store, t, outcome, reason)
+            telemetry.event("workflow.summary", **{
+                "devflow.total_seconds": record["seconds_total"],
+                "devflow.review_rounds": record["review_rounds"],
+                "devflow.human_wait_seconds": sum(v for k, v in record["seconds_by_state"].items()
+                                                  if k.startswith("awaiting_")),
+                "devflow.result": outcome})
             self.store.add_event(t.id, "run_record", {"key": key, "record": record})
             graphctx.ensure_fresh(self.cfg.root, builder=self.graph_builder)
             ledger = Ledger(ledger_path(self.cfg.root))

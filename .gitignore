@@ -7,3 +7,6 @@ dist/
 .DS_Store
 graphify-out/
 .devflow/state/
+
+infra/langfuse/.env
+infra/langfuse/login.json

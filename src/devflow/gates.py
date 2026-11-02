@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import telemetry
 from .detect import GATES
 from .loadconfig import Config
 
@@ -24,7 +25,7 @@ TAIL_CHARS = 6000
 SECRET_PATTERNS = (
     "*TOKEN*", "*SECRET*", "*PASSWORD*", "*PASSWD*", "*API_KEY*", "*APIKEY*", "*CREDENTIAL*",
     "AWS_*", "GH_*", "GITHUB_*", "ANTHROPIC_*", "OPENAI_*", "GOOGLE_*", "SUPABASE_*",
-    "DATABASE_URL", "*_DSN", "SSH_*",
+    "DATABASE_URL", "*_DSN", "SSH_*", "LANGFUSE_*", "OTEL_*", "DEVFLOW_TELEMETRY_*",
 )
 
 
@@ -129,8 +130,12 @@ def run_command(
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
     )
     try:
-        out, _ = proc.communicate(timeout=timeout_s)
-        return proc.returncode, out, False
+        with telemetry.span("tool.shell", {"devflow.command_kind": "gate_or_setup"}) as trace:
+            out, _ = proc.communicate(timeout=timeout_s)
+            trace.set(**{"process.exit_code": proc.returncode})
+            if proc.returncode != 0:
+                trace.fail()
+            return proc.returncode, out, False
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         out, _ = proc.communicate()
@@ -159,6 +164,11 @@ def run_gates(
                     duration_s=round(time.monotonic() - start, 2), timed_out=timed_out,
                     output_tail=out[-TAIL_CHARS:],
                 )
+                telemetry.event("gate.result", **{"devflow.gate": gate,
+                                                 "devflow.project": project.path,
+                                                 "devflow.ok": result.ok,
+                                                 "devflow.duration_s": result.duration_s,
+                                                 "devflow.timed_out": result.timed_out})
                 report.results.append(result)
                 if fail_fast and not result.ok:
                     return report

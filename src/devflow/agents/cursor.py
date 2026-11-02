@@ -14,6 +14,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from .. import telemetry
 from .base import (
     AgentError,
     AgentRequest,
@@ -73,6 +74,7 @@ class CursorAgent:
         prompt = f"{req.system}\n\n---\n\n{req.prompt}" if req.system else req.prompt
         return [*cmd, prompt]
 
+    @telemetry.agent_call
     def run(self, req: AgentRequest) -> AgentResult:
         proc = self.runner(self.build(req), req.cwd, agent_env(("CURSOR_",)), req.timeout_s, None)
         if proc.timed_out:

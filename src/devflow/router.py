@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import telemetry
 from .agents import Agent, AgentError, AgentRequest, AgentResult, check_ready, make_agent
 from .agents.base import _with, run_structured
 from .loadconfig import AgentBudget, Config, RoutingCfg
@@ -228,6 +229,9 @@ def run_routed(
     prompt_chars = len(req.prompt) + len(req.system)
     for _ in range(len(router.agents)):
         choice = router.pick(req.role, avoid=avoid, prefer=prefer, exclude=tried)
+        telemetry.event("routing.selected", **{"devflow.agent": choice.name,
+                                              "devflow.role": req.role,
+                                              "devflow.fallback_index": len(tried)})
         this = req if (prefer is None or choice.name == prefer) else _with(req, session=None)
         try:
             if structured:
@@ -240,6 +244,13 @@ def run_routed(
                 continue
             raise
         limited = router.record(choice.name, req.role, ticket_id, prompt_chars, result)
+        cost, tokens_in, tokens_out = router.estimate_cost(choice.name, result, prompt_chars)
+        telemetry.event("usage.recorded", **{"devflow.agent": choice.name,
+                                             "devflow.role": req.role,
+                                             "devflow.cost_usd": cost,
+                                             "devflow.cost_source": "reported" if result.cost_usd is not None else "estimated",
+                                             "devflow.tokens_in": tokens_in,
+                                             "devflow.tokens_out": tokens_out})
         if not result.ok:
             if limited:
                 tried.append(choice.name)

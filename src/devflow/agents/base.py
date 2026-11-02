@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .. import schema
+from .. import schema, telemetry
 from ..gates import scrubbed_env
 
 
@@ -162,6 +162,8 @@ def run_structured(
         if not problems:
             result.data = data
             return result
+        telemetry.event("schema.repair", **{"devflow.role": req.role,
+                                          "devflow.validation_errors": len(problems)})
         shown = "; ".join(problems[:4])
         if result.session:
             current = _with(req, prompt=REPAIR_PROMPT.format(problems=shown),

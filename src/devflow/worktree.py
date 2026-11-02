@@ -11,6 +11,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import telemetry
+
 BRANCH_PREFIX = "devflow/"
 
 
@@ -52,6 +54,7 @@ def base_ref(root: Path, default_branch: str) -> str:
     return remote if _has_ref(root, remote) else default_branch
 
 
+@telemetry.operation("worktree.prepare")
 def create(
     root: Path, worktree_root: Path, issue: int | str, title: str, default_branch: str,
     *, fetch: bool = True,
@@ -89,6 +92,7 @@ def _merge_base(path: Path, base: str) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+@telemetry.operation("worktree.verify_checkout")
 def create_detached(root: Path, path: Path, sha: str) -> Path:
     """A clean, detached checkout of exactly `sha` (for baselines and independent review).
 

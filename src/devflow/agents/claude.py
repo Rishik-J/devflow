@@ -13,6 +13,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from .. import telemetry
 from .base import (
     READ_TOOLS,
     WRITE_TOOLS,
@@ -61,6 +62,7 @@ class ClaudeAgent:
             cmd += ["--strict-mcp-config", "--mcp-config", str(mcp_file)]
         return cmd, req.prompt, session
 
+    @telemetry.agent_call
     def run(self, req: AgentRequest) -> AgentResult:
         with tempfile.TemporaryDirectory(prefix="devflow-claude-") as tmp:
             cmd, stdin, session = self.build(req, Path(tmp))

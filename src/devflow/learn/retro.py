@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import graphctx
+from .. import graphctx, telemetry
 from ..agents import Agent, AgentRequest, run_structured
 from ..context import load_brief
 from ..prompts import fence, schema_block
@@ -41,6 +41,7 @@ def build_task(record: dict, ledger: Ledger) -> str:
     return "\n\n".join(parts)
 
 
+@telemetry.operation("learning.retro")
 def distill(
     agent: Agent, record: dict, ledger: Ledger, *, root: Path, system: str, cwd: Path,
     ticket: int, promote_after: int, timeout_s: float = 600, model: str | None = None,

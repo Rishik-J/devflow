@@ -219,6 +219,27 @@ The default run limits are ten distinct tickets and sixty minutes. A lock shared
 
 `devflow run --dry-run` previews queue selection without model calls. `devflow ticket N --dry-run` is different: it can call agents and create temporary local worktrees, but logs GitHub writes instead of performing them.
 
+## Local traces and workflow metrics
+
+Run Langfuse on Docker to inspect ticket timelines, stage latency, agent invocations, retries,
+gate results, review loops and recorded usage:
+
+```bash
+# From this source checkout:
+python3 infra/langfuse/setup.py /absolute/path/to/your/repo
+docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env up -d
+
+cd /absolute/path/to/your/repo
+devflow telemetry demo
+devflow telemetry metrics
+```
+
+Open [localhost:3300](http://localhost:3300); local credentials are in
+`infra/langfuse/login.json` in the devflow checkout. Future runs in connected repositories emit
+nested spans automatically and keep a local JSONL log if export fails. Prompts, responses,
+command output and credential values are excluded. See the [observability guide](docs/observability.md)
+for setup, replay, scope and cost-accounting details.
+
 ## Development
 
 ```bash

@@ -375,12 +375,28 @@ def main(argv: list[str] | None = None) -> int:
     stats.add_argument("path", nargs="?", default=".")
     stats.set_defaults(func=learn_stats)
 
+    from .telemetry_cli import command as trace_command
+    tracing = sub.add_parser("telemetry", help="inspect, replay and test workflow traces")
+    tracing_actions = tracing.add_subparsers(dest="telemetry_action", required=True)
+    for action in ("status", "metrics", "replay", "demo"):
+        trace_parser = tracing_actions.add_parser(action)
+        trace_parser.add_argument("path", nargs="?", default=".")
+        if action == "replay":
+            trace_parser.add_argument("--limit", type=int, default=1000)
+        trace_parser.set_defaults(func=trace_command)
+
     args = parser.parse_args(argv)
+    from . import telemetry
+    from .detect import repo_root
+    trace_root = repo_root(Path(getattr(args, "path", ".")).resolve())
+    telemetry.configure(trace_root)
     try:
         return args.func(args)
     except (ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    finally:
+        telemetry.flush()
 
 
 if __name__ == "__main__":

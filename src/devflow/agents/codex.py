@@ -10,6 +10,7 @@ import json
 import tempfile
 from pathlib import Path
 
+from .. import telemetry
 from .base import (
     AgentError,
     AgentRequest,
@@ -46,6 +47,7 @@ class CodexAgent:
         prompt = f"{req.system}\n\n---\n\n{req.prompt}" if req.system else req.prompt
         return [*cmd, prompt]
 
+    @telemetry.agent_call
     def run(self, req: AgentRequest) -> AgentResult:
         with tempfile.TemporaryDirectory(prefix="devflow-codex-") as tmp:
             out_file = Path(tmp) / "last.txt"

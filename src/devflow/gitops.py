@@ -6,6 +6,8 @@ import fnmatch
 import subprocess
 from pathlib import Path
 
+from . import telemetry
+
 BOT = ("-c", "user.name=devflow", "-c", "user.email=devflow@localhost")
 MAX_FILE_BYTES = 5 * 1024 * 1024
 SENSITIVE = (".env", ".env.*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "*credentials*.json",
@@ -20,6 +22,7 @@ class UnsafeCommit(GitError):
     """The change contains something an automated run must not commit. Needs a human."""
 
 
+@telemetry.operation("tool.git")
 def git(path: Path, *args: str, check: bool = True, timeout: int = 120) -> str:
     proc = subprocess.run(
         ["git", *BOT, "-C", str(path), *args], capture_output=True, text=True, timeout=timeout,

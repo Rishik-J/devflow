@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from .. import telemetry
 from .base import AgentError, AgentRequest, AgentResult
 
 Reply = str | dict | list | AgentResult | Exception
@@ -23,6 +24,7 @@ class FakeAgent:
         self._script = script if script is not None else {}
         self.calls: list[AgentRequest] = []
 
+    @telemetry.agent_call
     def run(self, req: AgentRequest) -> AgentResult:
         self.calls.append(req)
         if callable(self._script):
