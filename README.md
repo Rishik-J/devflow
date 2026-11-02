@@ -173,8 +173,18 @@ It then reviews the implementation diff and gate evidence. Devflow still refuses
 when CI fails, when the reviewed branch changes, or when engine gates fail. Clarification
 questions and escalations still pause the affected ticket.
 
-Run `devflow run --max-tickets 3 --max-minutes 60` in the repository, or schedule that
-command with OpenClaw Automations every few minutes for unattended operation. The queue
+Run `devflow run --max-tickets 3 --max-minutes 60` in the repository. For unattended
+operation, create one OpenClaw Automation per repository:
+
+```bash
+openclaw automations add --name "Devflow queue" --every 2m \
+  --command "devflow run --max-tickets 3 --max-minutes 60 /path/to/repo" \
+  --command-cwd /path/to/repo --command-env "PATH=$PATH" \
+  --timeout-seconds 0 --no-deliver
+```
+
+The explicit `PATH` lets the job find OpenClaw and the coding-agent CLIs even when the
+Gateway starts with a reduced environment. The queue
 uses a repository lock, so overlapping invocations cannot work the same ticket. When the
 three-ticket checkpoint arrives, reply `continue` to an OpenClaw agent configured to run
 `devflow continue /path/to/repo`; the next scheduled run picks up the queue. You can also
