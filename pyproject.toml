@@ -7,10 +7,17 @@ name = "devflow"
 version = "0.1.0"
 description = "Deterministic dev-workflow engine with agent decision points; per-repo init tuned with a code graph"
 readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Rishik J" }]
 requires-python = ">=3.11"
 dependencies = [
   "jsonschema>=4.23,<5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Rishik-J/devflow"
+Repository = "https://github.com/Rishik-J/devflow"
+Issues = "https://github.com/Rishik-J/devflow/issues"
 
 [project.optional-dependencies]
 dev = [
