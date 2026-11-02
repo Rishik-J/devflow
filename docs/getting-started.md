@@ -206,3 +206,18 @@ devflow learn retro 12 --model YOUR_PROVIDER/YOUR_MODEL
 
 Use `devflow --help`, `devflow tickets`, `devflow agents`, and `devflow stats` to inspect state.
 Do not delete the local database as a routine retry strategy: it contains session and approval history.
+
+
+## Optional: start local workflow tracing
+
+The devflow checkout includes a complete Docker-based Langfuse setup:
+
+```bash
+# Run from your devflow source checkout, passing your target repository:
+./scripts/observability up --capture-content /absolute/path/to/your/repo
+```
+
+This generates unique local credentials, connects the target repo and waits for Langfuse at
+[localhost:3300](http://localhost:3300). Your normal devflow runs then emit detailed traces.
+Use `./scripts/observability status`, `logs`, or `stop` to operate the stack. See the
+[observability guide](observability.md) for privacy controls and capture limits.

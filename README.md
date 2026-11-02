@@ -225,21 +225,29 @@ Run Langfuse on Docker to inspect ticket timelines, stage latency, agent invocat
 gate results, review loops and recorded usage:
 
 ```bash
-# From this source checkout:
-python3 infra/langfuse/setup.py /absolute/path/to/your/repo
-docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env up -d
+# From this source checkout; Docker handles credentials and all observability services:
+./scripts/observability up --capture-content /absolute/path/to/your/repo
 
+# Then run devflow normally in that repository:
 cd /absolute/path/to/your/repo
 devflow telemetry demo
 devflow telemetry metrics
 ```
 
+The setup image, Compose stack and tracing integration are included in this repository.
+Anyone cloning devflow gets the same setup; only Docker with Compose v2 is needed to start
+observability. Run `./scripts/observability up` to connect the devflow checkout itself, or
+supply multiple repository paths. Credentials are generated uniquely on each machine.
+
 Open [localhost:3300](http://localhost:3300); local credentials are in
-`infra/langfuse/login.json` in the devflow checkout. Future runs in connected repositories emit
-nested spans automatically and keep a local JSONL log if export fails. Add `--capture-content`
-to setup to record redacted prompts, responses, tool payloads and review artifacts. Content
-capture is opt-in per repository. See the [observability guide](docs/observability.md)
-for setup, replay, scope and cost-accounting details.
+`infra/langfuse/login.json` in the devflow checkout. Add `--capture-content` to record redacted
+prompts, responses, tool payloads and review artifacts; omit it for metadata-only capture in a
+new repository. Existing capture settings are preserved. Named Docker volumes retain traces.
+Use `./scripts/observability status`, `stop`, or `logs` to manage the stack.
+
+Devflow and its authenticated coding agents run on the host; this Docker bundle supplies
+observability. See the [observability guide](docs/observability.md) for setup, replay, scope
+and cost-accounting details.
 
 ## Development
 

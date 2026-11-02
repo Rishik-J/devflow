@@ -1,0 +1,4 @@
+# Only the setup program enters the build context. Never copy local keys or login files.
+*
+!Dockerfile
+!setup.py

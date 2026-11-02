@@ -4,7 +4,14 @@ import json
 import secrets
 from pathlib import Path
 
-root = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--capture-content", action="store_true", help="Capture redacted prompts, responses and tool payloads locally")
+parser.add_argument("repos", nargs="*")
+parser.add_argument("--data-dir", type=Path, help="Directory for local generated credentials")
+args = parser.parse_args()
+
+root = (args.data_dir or Path(__file__).resolve().parent).resolve()
+root.mkdir(parents=True, exist_ok=True)
 env_file = root / ".env"
 if env_file.exists():
     values = dict(line.split("=", 1) for line in env_file.read_text().splitlines() if "=" in line)
@@ -16,10 +23,6 @@ else:
     values["LANGFUSE_SECRET_KEY"] = "sk-lf-" + secrets.token_hex(16)
     env_file.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
     env_file.chmod(0o600)
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--capture-content", action="store_true", help="Capture redacted prompts, responses and tool payloads locally")
-parser.add_argument("repos", nargs="*")
-args = parser.parse_args()
 for arg in args.repos:
     repo = Path(arg).resolve()
     if not (repo / ".git").exists():
@@ -42,4 +45,4 @@ login = root / "login.json"
 login.write_text(json.dumps({"url": "http://localhost:3300", "email": "admin@devflow.local",
                             "password": values["ADMIN_PASSWORD"]}, indent=2))
 login.chmod(0o600)
-print("Local credentials saved in infra/langfuse/login.json; secret values were not printed.")
+print(f"Local credentials saved in {login}; secret values were not printed.")

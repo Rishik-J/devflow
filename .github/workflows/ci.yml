@@ -11,3 +11,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv run --no-project --with ruff ruff check .
       - run: uv run --no-project --with pytest --with-editable . python -m pytest -q
+  observability-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build portable observability initializer
+        run: docker build -t devflow-observability-setup:test infra/langfuse
+      - name: Smoke-test fresh Docker setup
+        run: |
+          docker run --rm --entrypoint sh devflow-observability-setup:test -ec '
+            test ! -f /opt/devflow/.env
+            test ! -f /opt/devflow/login.json
+            mkdir -p /tmp/repo/.git
+            python /opt/devflow/setup.py --data-dir /tmp/credentials --capture-content /tmp/repo
+            python -c "import json; from pathlib import Path; cfg=json.loads(Path(\"/tmp/repo/.devflow/state/telemetry.json\").read_text()); assert cfg[\"capture_content\"]; assert Path(\"/tmp/credentials/login.json\").exists()"
+          '

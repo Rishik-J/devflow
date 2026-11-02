@@ -6,16 +6,47 @@ observability features; no Langfuse Cloud account or Enterprise license is requi
 
 ## Start the stack
 
-From the devflow source checkout:
+From a clone of the devflow source repository, run:
 
 ```bash
-python3 infra/langfuse/setup.py /absolute/path/to/your/repo
-docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env up -d
+./scripts/observability up --capture-content /absolute/path/to/your/repo
 ```
 
-The setup script generates random credentials once, creates a local organization and project
-through Langfuse's documented headless initialization, and enables telemetry for each repository
-path supplied. You can supply multiple repo paths. Run it again to connect another repository.
+This is a Docker-only setup: the script builds the small initializer image from
+`infra/langfuse/Dockerfile`, generates private credentials inside that container, connects the
+selected repositories and starts the included Compose stack. No host Python, API-key copying,
+or separate Langfuse checkout is needed for this setup. Docker with Compose v2 must be running.
+The script waits for the Langfuse health endpoint before reporting readiness.
+
+Omit `--capture-content` for metadata-only tracing in a new repository. Omit the repository
+path to connect this devflow checkout. To connect several repositories to the same local
+project, supply several paths (quote paths containing spaces):
+
+```bash
+./scripts/observability up --capture-content "/path/first repo" /path/second-repo
+# Connect another repository without restarting containers:
+./scripts/observability connect --capture-content /path/another-repo
+```
+
+Each user gets unique generated credentials and local persistent Docker volumes. Repeated
+setup reuses credentials and preserves the repository's existing content-capture setting.
+The setup container runs as the invoking user and writes valid host-absolute trace-log paths.
+Its build context includes only the setup program and Dockerfile, excluding generated secrets.
+The container mounts the chosen repository and local credential directory only while setting up;
+it is removed after setup. The Docker socket is not mounted inside any container.
+
+The setup container and Langfuse services are bundled here; devflow itself, OpenClaw and the
+coding-agent CLIs continue running on the host with their existing authentication. Their
+normal installation and login prerequisites still apply, including each user's own model
+subscription or API access. Windows users should run the wrapper in WSL2
+with Docker Desktop integration; the supported shell environments are macOS and Linux.
+
+The earlier manual startup remains supported when Python 3.11+ is available:
+
+```bash
+python3 infra/langfuse/setup.py --capture-content /absolute/path/to/your/repo
+docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env up -d --wait
+```
 
 Open [Langfuse](http://localhost:3300). Login details are in `infra/langfuse/login.json` locally.
 The project is **Devflow Workflows**. The login file and `.env` are ignored by git and mode 0600;
@@ -189,9 +220,10 @@ LangChain auto-instrumentation wrapper would not reveal those subprocesses' inte
 
 ```bash
 # From the devflow checkout:
-docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env ps
-docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env stop
-docker compose -f infra/langfuse/compose.yaml --env-file infra/langfuse/.env up -d
+./scripts/observability status
+./scripts/observability logs
+./scripts/observability stop
+./scripts/observability up
 ```
 
 Stopping containers preserves data. Removing volumes deletes stored traces and account data.

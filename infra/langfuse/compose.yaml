@@ -45,6 +45,12 @@ services:
     restart: unless-stopped
     depends_on: *depends
     ports: ["127.0.0.1:3300:3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://' + process.env.HOSTNAME + ':3000/api/public/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 24
     environment:
       <<: *common
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
