@@ -395,6 +395,9 @@ def main(argv: list[str] | None = None) -> int:
         trace_parser.add_argument("path", nargs="?", default=".")
         if action == "replay":
             trace_parser.add_argument("--limit", type=int, default=1000)
+        if action == "metrics":
+            trace_parser.add_argument("--issue", type=int, default=None,
+                                      help="summarise latency for one issue's session")
         trace_parser.set_defaults(func=trace_command)
 
     args = parser.parse_args(argv)
