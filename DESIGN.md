@@ -1,74 +1,116 @@
-# devflow design
+# Architecture
 
-## Principle
+Devflow combines a deterministic execution engine with agents at the points that need judgment.
+The repository configuration, persisted ticket state and verified gate results determine when
+work advances. An agent saying it is finished does not itself advance a ticket.
 
-Code owns state, gates and facts. Agents own judgment. A ticket moves through a state machine
-in ordinary code; agents are steps inside it and return structured output (JSON against a
-schema). Nothing advances because an agent says "done". It advances because a check the engine
-ran itself passed.
+## Components
 
-## Pipeline
+| Component | Responsibility |
+|---|---|
+| `init.py`, `detect.py`, `config.py` | Discover projects and render per-repository configuration, prompts and schemas |
+| `loadconfig.py` | Validate runtime settings from the primary checkout |
+| `states.py`, `store.py` | Legal transitions, retry caps, transactional ticket state, events and artifacts |
+| `scheduler.py`, `board.py` | Select eligible GitHub Project items and mirror ticket status |
+| `runner.py` | Sequential queue execution, polling, exclusive ownership and stage-boundary limits |
+| `engine.py` | Drive a ticket through its stages and human gates |
+| `agents/`, `router.py` | Invoke coding-agent CLIs and OpenClaw, normalize output, resume sessions and route work |
+| `worktree.py`, `gitops.py` | Manage checkouts, commits, branch pushes and remote verification |
+| `gates.py`, `baseline.py`, `diffguard.py` | Execute checks, distinguish existing failures, detect protected-file or test changes |
+| `host.py`, `commands.py`, `notify.py` | GitHub operations, authorized human commands and configurable notifications |
+| `graphctx.py`, `context.py` | Refresh local Graphify data and construct repository context |
+| `learn/` | Capture run records, distil and manage lessons, select prompt context and publish context PRs |
 
+## Ticket lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> New
+    New --> Refining
+    Refining --> AwaitingClarification
+    AwaitingClarification --> Refining
+    Refining --> AwaitingPlanApproval
+    AwaitingPlanApproval --> Refining: reject
+    AwaitingPlanApproval --> TestDesign: approve
+    TestDesign --> Implementing
+    Implementing --> Gates
+    Gates --> Implementing: new failures
+    Gates --> InReview: checks accepted
+    InReview --> ChangesRequested
+    ChangesRequested --> Implementing
+    InReview --> AwaitingMergeApproval: approved
+    AwaitingMergeApproval --> Merged: approval and CI checks
+    Merged --> [*]
 ```
-NEW > REFINING > AWAITING_PLAN_APPROVAL > TEST_DESIGN > IMPLEMENTING > GATES > IN_REVIEW
-        ^   |            (human)                ^            ^  |        |
-        |   v                                   |            |  v        v
- AWAITING_CLARIFICATION                         +---- CHANGES_REQUESTED  AWAITING_MERGE_APPROVAL
-                                                                             (human) > MERGED
-Any live state > ESCALATED (notify the human) or CANCELLED
-```
 
-`src/devflow/states.py` is the single source of truth for this table, including the retry caps
-(review rounds, failed-gate attempts). A cap raises `LimitExceeded` and the engine escalates
-instead of looping.
+`states.py` defines the full transition table, including escalation and cancellation. Retries,
+review rounds and implementation attempts are bounded. An escalated ticket waits for a person;
+an interrupted run continues from its saved state.
 
-## Who does what
+## Control and judgment
 
-| Stage | Code (deterministic) | Agent (judgment) |
-|---|---|---|
-| Refine | fetch ticket and graph context, validate plan against `plan.schema.json` | planner: ambiguities, clarifying questions, plan |
-| Test design | traceability check: every acceptance criterion maps to a test | test planner: unit and integration cases |
-| Implement | worktree per ticket, launch `claude -p` / `codex exec`, keep the session id and resume it with feedback, timeouts | triage: retry, replan or escalate |
-| Gates | run lint / typecheck / unit / integration / build from a clean checkout; check tests were not deleted, skipped or weakened | none |
-| Review | separate checkout, run the integration command, parse findings against `review.schema.json` | reviewer: independent agent, ideally a different model from the coder |
-| Triage | round counting and caps | decide which findings are blocking and what the coder is told |
-| Merge | only if CI green, review approved, no blocking findings, and (initially) a human yes | none |
+OpenClaw hosts the planner, triage and retrospective roles in a dedicated agent workspace.
+The engine supplies role instructions, repository context, ticket data and the reply schema.
+OpenClaw plans the work, asks questions and advises whether stalled work needs a retry,
+replanning or escalation. The runner controls execution and calls these decision points.
 
-## Rules the engine enforces
+The test planner and coder use a routed coding-agent CLI. The reviewer runs in a separate
+session and prefers another tool. Tool separation does not imply different underlying models.
+Sessions remain associated with their tool; a handoff to another tool needs a fresh session.
 
-- Stages talk through schemas, not free text.
-- Tests are designed before code. A criterion with no test sends the plan back to refinement.
-- "Done" is never trusted; gates re-run from a clean checkout.
-- The reviewer is a separate session in a separate checkout and runs the integration tests
-  itself.
-- Human gates (plan approval, merge approval) are states. Turning one off auto-passes it with
-  `actor="auto"`, so the audit trail is identical.
-- Caps and stuck-detection escalate to a person with one message: what happened, options,
-  recommendation.
+Agent replies that require structure are validated against JSON schemas. Invalid replies get a
+bounded repair attempt. Ticket text and tool output are fenced as data in prompts. These
+instruction and tool-permission controls reduce accidental behavior; they are not a complete
+security boundary against arbitrary generated code.
 
-## Per-repo init
+## Verification and merge
 
-`devflow init` makes the workflow repo-specific without code changes:
+Each ticket has its own worktree. The engine commits changes and pushes the branch on every
+review pass. A separate checkout of the committed change is used for gate verification; the
+reviewer receives those results and does not repeat the gate commands itself.
 
-1. Detect projects, gate commands, CI hints and convention files (`detect.py`).
-2. Build the code graph (`graphify update`, local AST only). Planner, test planner and reviewer
-   prompts point at it for blast-radius questions.
-3. Pick coder and reviewer agents (different models when both are installed).
-4. Render `.devflow/config.toml`, prompts and schemas. Report what it could not detect.
+Checks come from configuration in the primary checkout, so changing the ticket branch cannot
+silently redefine its own gates. Baseline comparison distinguishes pre-existing failures from
+new ones. Diff checks block some forms of deleted or skipped tests and changes to protected
+workflow files, and flag suspicious assertion reductions for inspection.
 
-Re-running is safe. Existing files are kept; `--force` regenerates them.
+Human plan and merge gates are enabled by default. Authorized GitHub comments are consumed
+once. Before merging, the engine verifies the branch is still at the reviewed commit and pins
+the merge operation to that SHA. A changed branch blocks merging until it is reviewed again.
 
-## Where OpenClaw fits
+## Queue behavior
 
-OpenClaw is the interface and the judgment layer, not the loop driver: it carries clarification
-questions and escalations to you over iMessage, hosts the planner and triage agents, and calls
-the engine as a tool. Its model calls can stall for minutes and its sessions can reject
-overlapping messages, so a retrying deterministic loop is the safer place for control flow.
+The scheduler selects open, labelled issues in Ready whose declared dependencies are closed,
+ordered by priority and issue number. Tickets awaiting human input do not use the active-work
+slot. The current runner executes stages sequentially, including when `max_active` is greater
+than one. Watch mode polls for new approvals and eligible work.
 
-## Build order
+An OS lock in the repository's common git directory prevents concurrent queue or single-ticket
+runs across worktrees. STOP, elapsed-time limits and recorded-cost ceilings are checked between
+stages. They do not cancel a model call or command already in progress. Cost measurements may
+be estimates and exclude unmetered provider calls.
 
-1. `init`, `doctor`, state machine (done).
-2. Gate runner and worktrees; run one ticket by hand.
-3. Coder driver (Claude Code and Codex, session resume) and the feedback loop.
-4. Reviewer driver, PR creation through `gh`, merge rules.
-5. Notifier (OpenClaw / iMessage) and ticket intake. Then loosen human gates one at a time.
+## Context and learning
+
+Initialization creates a shared repository brief. Before agent requests, Graphify freshness is
+checked against the checkout fingerprint; changed source triggers a local AST update. Agents
+receive a graph digest and file relationships. Claude and Codex also receive generated Graphify
+MCP configuration; OpenClaw receives the checkout path and CLI-query guidance.
+
+A merged or escalated ticket can produce a deterministic run record and an agent retrospective.
+Proposed lessons are checked, stored with evidence and initially marked as candidates. Independent
+evidence from multiple tickets or human confirmation promotes them. Active lessons are selected
+by role, scope and prompt budget. Conflicts are flagged, and stale agent lessons can retire.
+
+The local ledger is the immediate source for prompt selection. Publishing creates a context PR
+containing only the repository brief and ledger. That PR distributes a reviewable snapshot; it
+does not approve candidates or merge itself. Run databases, transcripts and graph caches are
+excluded from the context PR.
+
+## Operational boundaries
+
+Devflow runs as an on-demand CLI on macOS or Linux. GitHub remains the work and approval surface;
+no daemon, web dashboard or automatic iMessage integration is installed. Notifications use a
+configured command. Agent authentication and model billing remain with the underlying tools.
+
+For setup and commands, see the [README](README.md) and [operating guide](docs/getting-started.md).
