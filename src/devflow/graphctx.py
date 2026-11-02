@@ -95,24 +95,32 @@ def ensure_fresh(
     builder: Callable[[Path], GraphResult] = build_graph,
 ) -> GraphStatus:
     """Rebuild the graph if (and only if) the tree changed since it was last built."""
-    current = fingerprint(root)
-    if not force and bool(current) and graph_path(root).exists() and current == _stored(root):
-        nodes, edges = _counts(root)
-        return _report(GraphStatus(False, True, nodes, edges, "up to date", current, "fresh"))
+    current, built = "", False
     try:
-        result = builder(root)
-    except Exception:  # noqa: BLE001 - a broken builder is "unavailable"; its text is never recorded
-        return _report(GraphStatus(False, False, message="graph builder error",
-                                   fingerprint=current, state="unavailable"))
-    if not result.ok:
-        state = "failed" if result.ran and current else "unavailable"
-        return _report(GraphStatus(result.ran, False, message=result.message or "build failed",
-                                   fingerprint=current, state=state))
-    # Fingerprint again: the build itself must not have changed the tree it describes.
-    (root / GRAPH_DIR).mkdir(exist_ok=True)
-    (root / GRAPH_DIR / FINGERPRINT_FILE).write_text(current or fingerprint(root))
-    return _report(GraphStatus(True, True, result.nodes, result.edges, "rebuilt", current,
-                               "refreshed" if current else "unavailable"))
+        current = fingerprint(root)
+        if not force and bool(current) and graph_path(root).exists() and current == _stored(root):
+            nodes, edges = _counts(root)
+            return _report(GraphStatus(False, True, nodes, edges, "up to date", current, "fresh"))
+        try:
+            result = builder(root)
+        except Exception:  # noqa: BLE001 - a broken builder is "unavailable"; text never recorded
+            return _report(GraphStatus(False, False, message="graph builder error",
+                                       fingerprint=current, state="unavailable"))
+        if not result.ok:
+            state = "failed" if result.ran and current else "unavailable"
+            return _report(GraphStatus(result.ran, False, message=result.message or "build failed",
+                                       fingerprint=current, state=state))
+        built = True
+        # Fingerprint again: the build itself must not have changed the tree it describes.
+        (root / GRAPH_DIR).mkdir(exist_ok=True)
+        (root / GRAPH_DIR / FINGERPRINT_FILE).write_text(current or fingerprint(root))
+        return _report(GraphStatus(True, True, result.nodes, result.edges, "rebuilt", current,
+                                   "refreshed" if current else "unavailable"))
+    except Exception:  # noqa: BLE001 - git timeout, unreadable files, failed write; never recorded
+        # The freshness check itself broke: report it on this span instead of raising.
+        return _report(GraphStatus(built, False, message="graph freshness check error",
+                                   fingerprint=current,
+                                   state="failed" if built and current else "unavailable"))
 
 
 def _counts(root: Path) -> tuple[int, int]:

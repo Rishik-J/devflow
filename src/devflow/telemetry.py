@@ -181,6 +181,7 @@ GRAPH_STATES = ("fresh", "refreshed", "failed", "unavailable")
 FINGERPRINT_CHARS = 12
 _HEX_SHA = re.compile(r"[0-9a-f]{7,64}")
 _HEX = re.compile(r"[0-9a-f]*")
+_REMOTE_SCHEMES = ("http", "https", "ssh", "git", "git+ssh", "ssh+git")
 _REMOTE_PART = re.compile(r"[A-Za-z0-9._~-]+")
 
 
@@ -195,6 +196,8 @@ def sanitize_remote(url) -> str:
     try:
         if "://" in text:
             parts = urlsplit(text)
+            if parts.scheme.lower() not in _REMOTE_SCHEMES:
+                return ""
             host, path = parts.hostname or "", parts.path
         else:
             match = re.fullmatch(r"(?:[^@/\s:]+@)?([A-Za-z0-9.\-]+):(?!//)([^?#\s]+)", text)

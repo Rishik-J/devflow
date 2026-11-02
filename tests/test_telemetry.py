@@ -298,6 +298,8 @@ from devflow.graphify import GraphResult
     ("https://user:secret@github.com/o/r.git?x=1#f", "github.com/o/r"),
     ("git@github.com:o/r.git", "github.com/o/r"),
     ("ssh://git@host.example:2222/o/r", "host.example/o/r"),
+    ("file://localhost/Users/alice/private-repo.git", ""), ("file:///Users/alice/repo.git", ""),
+    ("ftp://host.example/o/r", ""),
     ("", ""), ("not a url", ""), ("/local/path/origin.git", ""), ("https://github.com/", ""),
 ])
 def test_remote_sanitizer(url, expected):
