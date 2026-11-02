@@ -454,3 +454,164 @@ def test_provenance_present_with_and_without_content_capture(tmp_path, content):
     finally:
         env.store.close()
         telemetry.configure(settings={})
+
+
+# ---- full ticket lifecycle ----------------------------------------------------------------
+
+def _root(slice_):
+    roots = [r for r in slice_ if r["name"] == "ticket.run"]
+    assert len(roots) == 1 and roots[0]["parent_id"] == ""
+    return roots[0]
+
+
+def _index(slice_):
+    return {r["span_id"]: r for r in slice_}
+
+
+def _named(slice_, name):
+    return [r for r in slice_ if r["name"] == name]
+
+
+def _stage_chain(slice_):
+    stages = [r for r in slice_ if r["name"].startswith("stage.") and r["name"] != "stage.result"]
+    return sorted(stages, key=lambda r: r["start_ns"])
+
+
+def _row(name, span_id, start_ns=0, parent_id="", **attrs):
+    return {"name": name, "span_id": span_id, "start_ns": start_ns, "parent_id": parent_id,
+            "trace_id": "t", "attributes": attrs}
+
+
+def test_lifecycle_helpers_sort_filter_and_index():
+    rows_ = [_row("stage.b", "3", 30, "1"), _row("ticket.run", "1"), _row("stage.result", "9", 5, "3"),
+             _row("stage.a", "2", 10, "1")]
+    assert [r["name"] for r in _stage_chain(rows_)] == ["stage.a", "stage.b"]
+    assert _root(rows_)["span_id"] == "1"
+    assert _index(rows_)["2"]["name"] == "stage.a"
+    assert [r["span_id"] for r in _named(rows_, "stage.a")] == ["2"]
+    with pytest.raises(AssertionError):
+        _root([_row("stage.a", "2", 10, "1")])
+
+
+def test_full_lifecycle_traces_span_three_invocations_with_consistent_parentage(capture, tmp_path):
+    env = Env(tmp_path / "ticket")
+    try:
+        first = env.engine().run(1)
+        assert first.status == "paused" and first.ticket.state is State.AWAITING_PLAN_APPROVAL
+        assert first.reason.startswith("waiting for /approve or /reject")
+        n1 = len(rows(capture))
+        env.say("alice", "/approve")
+        second = env.engine().run(1)
+        assert second.status == "paused" and second.ticket.state is State.AWAITING_MERGE_APPROVAL
+        assert second.reason.startswith("waiting for /approve on PR")
+        review = env.store.stage_results("#1", "review")[-1]["payload"]
+        assert review["agent"] == "codex" and review["independent"] and review["approved"]
+        n2 = len(rows(capture))
+        env.say("alice", "/approve", number=env.pr())
+        third = env.engine().run(1)
+        assert third.status == "done" and third.ticket.state is State.MERGED
+        assert env.host.merged == [env.pr()]
+        history = [h["to"] for h in env.ticket().history]
+    finally:
+        env.store.close()
+
+    allrows = rows(capture)
+    slices = [allrows[:n1], allrows[n1:n2], allrows[n2:]]
+    assert all(slices)
+    roots = [_root(s) for s in slices]
+    assert len({r["trace_id"] for r in roots}) == 3
+    for s, root in zip(slices, roots):
+        assert {r["trace_id"] for r in s} == {root["trace_id"]}
+    assert all(r["attributes"]["langfuse.session.id"] == "t:issue-1" for r in allrows)
+    names = {r["name"] for r in allrows}
+    assert {"stage.result", "routing.selected", "usage.recorded", "gate.result", "state.transition",
+            "tool.git"} <= names
+
+    for s, root in zip(slices, roots):
+        index = _index(s)
+        assert len(index) == len(s)
+        for r in s:
+            cur, hops = r, 0
+            while cur is not root:
+                assert cur["parent_id"] in index
+                cur = index[cur["parent_id"]]
+                hops += 1
+                assert hops < 50
+
+    expected_chains = [
+        ["stage.new", "stage.refining", "stage.awaiting_plan_approval"],
+        ["stage.awaiting_plan_approval", "stage.test_design", "stage.implementing", "stage.gates",
+         "stage.in_review", "stage.awaiting_merge_approval"],
+        ["stage.awaiting_merge_approval"],
+    ]
+    stage_by_name = []
+    for s, root, expected in zip(slices, roots, expected_chains):
+        chain = _stage_chain(s)
+        assert [r["name"] for r in chain] == expected
+        assert all(r["parent_id"] == root["span_id"] for r in chain)
+        assert all(r["attributes"]["devflow.state"] == r["name"].removeprefix("stage.") for r in chain)
+        stage_by_name.append({r["name"]: r for r in chain})
+    assert not any(r["name"] == "stage.merged" for r in allrows)
+
+    expected_transitions = [
+        [("refining", "stage.new"), ("awaiting_plan_approval", "stage.refining")],
+        [("test_design", "stage.awaiting_plan_approval"), ("implementing", "stage.test_design"),
+         ("gates", "stage.implementing"), ("in_review", "stage.gates"),
+         ("awaiting_merge_approval", "stage.in_review")],
+        [("merged", "stage.awaiting_merge_approval")],
+    ]
+    destinations = []
+    for s, stages, expected in zip(slices, stage_by_name, expected_transitions):
+        transitions = sorted(_named(s, "state.transition"), key=lambda r: r["start_ns"])
+        got = [(r["attributes"]["devflow.state"], _index(s)[r["parent_id"]]["name"]) for r in transitions]
+        assert got == expected
+        assert all(r["parent_id"] == stages[parent]["span_id"] for r, (_, parent) in zip(transitions, expected))
+        destinations += [d for d, _ in got]
+    assert destinations == history == ["refining", "awaiting_plan_approval", "test_design", "implementing",
+                                       "gates", "in_review", "awaiting_merge_approval", "merged"]
+
+    def agent_span(s, stages, name, stage):
+        found = _named(s, name)
+        assert len(found) >= 1
+        for r in found:
+            assert r["parent_id"] == stages[stage]["span_id"]
+            assert "devflow.role" in r["attributes"] and r["attributes"]["devflow.ok"] is True
+        return found[0]
+
+    agent_span(slices[0], stage_by_name[0], "agent.fake.planner", "stage.refining")
+    agent_span(slices[1], stage_by_name[1], "agent.claude.test_planner", "stage.test_design")
+    coder = agent_span(slices[1], stage_by_name[1], "agent.claude.coder", "stage.implementing")
+    reviewer = agent_span(slices[1], stage_by_name[1], "agent.codex.reviewer", "stage.in_review")
+    assert reviewer["name"].split(".")[1] != coder["name"].split(".")[1]
+    results = [r for r in _named(slices[1], "stage.result")
+               if r["attributes"].get("devflow.artifact") == "review"]
+    assert results and all(r["parent_id"] == stage_by_name[1]["stage.in_review"]["span_id"]
+                           and r["attributes"]["devflow.reviewer_independent"] is True
+                           and r["attributes"]["devflow.ok"] is True for r in results)
+    assert not any(r["name"].startswith("agent.") for r in slices[2])
+    for s in slices:
+        index = _index(s)
+        for r in _named(s, "routing.selected") + _named(s, "usage.recorded"):
+            # the router emits these in the calling stage's context, not inside the agent span
+            assert index[r["parent_id"]]["name"].startswith("stage.")
+
+    gate_stages = stage_by_name[1]
+    for stage in ("stage.gates", "stage.in_review"):
+        assert any(r["attributes"].get("devflow.gate") == "unit" and r["attributes"].get("devflow.ok") is True
+                   and r["parent_id"] == gate_stages[stage]["span_id"]
+                   for r in _named(slices[1], "gate.result"))
+    for s in slices:
+        index = _index(s)
+        assert all(index[r["parent_id"]]["name"].startswith("stage.") for r in _named(s, "gate.result"))
+
+    assert roots[0]["status"] == "waiting" and roots[1]["status"] == "waiting" and roots[2]["status"] == "ok"
+    expected_status = [
+        {"stage.new": "ok", "stage.refining": "ok", "stage.awaiting_plan_approval": "waiting"},
+        {"stage.awaiting_plan_approval": "ok", "stage.test_design": "ok", "stage.implementing": "ok",
+         "stage.gates": "ok", "stage.in_review": "ok", "stage.awaiting_merge_approval": "waiting"},
+        {"stage.awaiting_merge_approval": "ok"},
+    ]
+    for stages, expected in zip(stage_by_name, expected_status):
+        assert {n: r["status"] for n, r in stages.items()} == expected
+    assert not any(r["status"] == "waiting" for r in slices[2])
+    assert not any(r["status"] == "error" for r in allrows)
