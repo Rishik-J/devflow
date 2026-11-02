@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import checkpoint
 from .board import BoardError, status_for
 from .scheduler import select
 from .states import TERMINAL
@@ -67,6 +68,8 @@ class QueueRunner:
 
     def guard(self) -> str:
         root = self.engine.cfg.root
+        if checkpoint.read(root)["pending"]:
+            return "three-ticket checkpoint awaiting your continue reply"
         if (root / ".devflow" / "STOP").exists():
             return "STOP file found; remove .devflow/STOP before resuming"
         if self.now() - self.started >= self.limits.max_minutes * 60:
@@ -74,6 +77,17 @@ class QueueRunner:
         if self.limits.max_cost_usd and self.cost() - self.start_cost >= self.limits.max_cost_usd:
             return "recorded model cost limit reached"
         return ""
+
+    def notify_pending(self) -> None:
+        root = self.engine.cfg.root
+        data = checkpoint.read(root)
+        if not data["pending"] or data.get("notified") or not data.get("message"):
+            return
+        if self.engine.notifier.send(data["message"]):
+            data["notified"] = True
+            checkpoint.write(root, data)
+        else:
+            self.engine.log("checkpoint notification failed; will retry on the next run")
 
     def reconcile(self):
         # Cached board_status must not mask an external board edit or a previous write failure.
@@ -116,6 +130,36 @@ class QueueRunner:
         self.seen.add(issue)
         self.admitted.add(issue)
         result = self.engine.run(issue)
+        if result.ticket.state.value == "merged" and not self.engine.dry_run:
+            reached = checkpoint.merged(self.engine.cfg.root, issue,
+                                        result.ticket.sessions.get("pr", ""), result.ticket.title)
+            if reached:
+                lines = [f"- #{x['issue']} {x['title']} (PR #{x['pr']})"
+                         for x in reached["completed"]]
+                suggestions = ""
+                agent = self.engine.agents.get("planner")
+                if agent:
+                    from .agents import AgentError, AgentRequest
+                    try:
+                        response = agent.run(AgentRequest(
+                            role="checkpoint", cwd=self.engine.cfg.root,
+                            system="You oversee this product. Reply in plain text with 2-3 "
+                                   "specific, bounded next-ticket ideas and why they matter. "
+                                   "Do not run commands or approve work.",
+                            prompt="Three merged tickets:\n" + "\n".join(lines),
+                            read_only=True, timeout_s=180))
+                        if response.ok:
+                            suggestions = response.text[:1800].strip()
+                    except (AgentError, OSError, ValueError) as exc:
+                        self.engine.log(f"checkpoint recommendations unavailable: {type(exc).__name__}")
+                message = ("Devflow completed three tickets:\n" + "\n".join(lines)
+                           + "\n\nSuggested next steps:\n" +
+                           (suggestions or "Review the Project backlog and choose the next Ready tickets.")
+                           + "\n\nReply 'continue' after reading this update.")
+                reached["message"] = message
+                reached["notified"] = False
+                checkpoint.write(self.engine.cfg.root, reached)
+                self.notify_pending()
         self.outcomes.append({"issue": issue, "status": result.status,
                               "state": result.ticket.state.value, "reason": result.reason})
         self.engine.log(f"#{issue}: {result.status} ({result.reason})")
@@ -126,6 +170,7 @@ class QueueRunner:
         old_guard = self.engine.checkpoint
         self.engine.checkpoint = self.guard
         try:
+            self.notify_pending()
             while True:
                 if self.guard():
                     return RunReport(self.guard(), self.outcomes)

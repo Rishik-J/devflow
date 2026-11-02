@@ -357,6 +357,18 @@ def main(argv: list[str] | None = None) -> int:
                        help="recorded cost ceiling for this invocation; 0 disables it")
     queue.set_defaults(func=run_queue)
 
+    resume = sub.add_parser("continue", help="acknowledge the three-ticket checkpoint")
+    resume.add_argument("path", nargs="?", default=".")
+    def continue_queue(args):
+        from .checkpoint import acknowledge
+        from .detect import repo_root
+        root = repo_root(Path(args.path).resolve())
+        if root is None:
+            raise ValueError("not inside a git repository")
+        print("checkpoint acknowledged" if acknowledge(root) else "no checkpoint pending")
+        return 0
+    resume.set_defaults(func=continue_queue)
+
     from .learn.cli import run as learn_run
     from .learn.cli import stats as learn_stats
 

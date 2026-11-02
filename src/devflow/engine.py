@@ -329,7 +329,8 @@ class Engine:
             self._move(t, State.AWAITING_CLARIFICATION, "planner", f"{len(lines)} question(s)")
             return
         self._say(t, self._format_plan(plan))
-        self.notifier.send(f"#{t.issue} ({t.title}): plan ready for your approval.")
+        if self._gate_on("plan_approval"):
+            self.notifier.send(f"#{t.issue} ({t.title}): plan ready for your approval.")
         self._move(t, State.AWAITING_PLAN_APPROVAL, "planner", "plan ready")
 
     @staticmethod
@@ -357,7 +358,29 @@ class Engine:
 
     def _awaiting_plan_approval(self, t: Ticket) -> None:
         if not self._gate_on("plan_approval"):
-            self._move(t, State.TEST_DESIGN, "auto", "plan approval disabled")
+            reviewer = self.agents.get("reviewer")
+            if reviewer is None:
+                self._move(t, State.TEST_DESIGN, "auto", "plan approval disabled")
+                return
+            plan = self._latest(t, "plan") or {}
+            issue = self.host.get_issue(t.issue or 0)
+            req = self._request(
+                t, "reviewer",
+                "Review this proposed implementation plan against the issue and repository. "
+                "Check scope, acceptance criteria, testability, integration coverage, and "
+                "risk. Approve only if a coding agent could execute it without guessing. "
+                "If rejected, give concrete revision feedback.\n\n"
+                + prompts.ticket_block(issue) + "\n\n"
+                + prompts.fence("PROPOSED PLAN", json.dumps(plan, indent=2)),
+                schema="plan_review", read_only=True,
+            )
+            decision = run_structured(reviewer, req, self.cfg.root).data
+            self._put(t, "plan_review", decision)
+            if decision["decision"] == "approve":
+                self._move(t, State.TEST_DESIGN, reviewer.name, "plan approved")
+            else:
+                self._put(t, "plan_feedback", {"text": decision["reason"]})
+                self._move(t, State.REFINING, reviewer.name, "plan rejected")
             return
         cmds = self._commands(t, t.issue or 0, ("approve", "reject"))
         if not cmds:
@@ -552,8 +575,17 @@ class Engine:
                                                   stat, t.base_sha, diff),
                             schema="review", read_only=True, cwd=review_wt,
                             files=gitops.diff_names(review_wt, t.base_sha))
-        routed = run_routed(self.router, req, t.id, avoid={t.sessions.get("coder_agent", "")},
-                            structured=True, root=self.cfg.root)
+        if "reviewer" in self.agents:
+            # A dedicated supervisor can review without entering the coding-agent pool.
+            from .router import RoutedResult
+            reviewer = self.agents["reviewer"]
+            result = run_structured(reviewer, req, self.cfg.root)
+            routed = RoutedResult(result, reviewer.name, switched=False,
+                                  independent=reviewer.name != t.sessions.get("coder_agent", ""))
+        else:
+            routed = run_routed(self.router, req, t.id,
+                                avoid={t.sessions.get("coder_agent", "")},
+                                structured=True, root=self.cfg.root)
         review = routed.result.data
 
         blocking = [f for f in review["findings"] if f.get("blocking")]
@@ -576,7 +608,8 @@ class Engine:
             t.sessions["reviewed_sha"] = head
             t.sessions.pop("review_fail_sig", None)
             self.store.save_ticket(t)
-            self.notifier.send(f"#{t.issue} ({t.title}): reviewed and ready to merge.")
+            if self._gate_on("merge_approval"):
+                self.notifier.send(f"#{t.issue} ({t.title}): reviewed and ready to merge.")
             self._move(t, State.AWAITING_MERGE_APPROVAL, routed.agent, "approved")
             return
         if not blocking:
@@ -666,7 +699,8 @@ class Engine:
         text = f"#{t.issue} ({t.title}) was merged."
         text += self._file_followups(t)
         self._say(t, text)
-        self.notifier.send(text)
+        if self._gate_on("merge_approval"):
+            self.notifier.send(text)
         self._learn(t, "merged")
         if not self.dry_run:
             worktree.remove(self.cfg.root, self._wt(t), delete_branch=True)

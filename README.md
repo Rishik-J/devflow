@@ -145,6 +145,45 @@ Reply in GitHub with one of these comments. Only configured approvers count; by 
 
 An approval is consumed once. An issue-level plan approval does not authorize the later merge.
 
+## Autonomous queue with OpenClaw supervision
+
+For a trusted repository, you can let the dedicated OpenClaw agent review plans and pull
+requests while devflow enforces tests, CI and the reviewed commit before merging. The queue
+stops after every three merged tickets and sends one checkpoint with completed work and
+suggested next tickets. A reply of `continue` from the owner resumes the queue. This is an
+opt-in mode; the default human approval gates above remain enabled.
+
+Set these values in the target repository's `.devflow/config.toml`:
+
+```toml
+[human_gates]
+plan_approval = false
+merge_approval = false
+notify_command = "openclaw agent --agent devflow --deliver --reply-channel imessage --reply-to YOUR_IMESSAGE_HANDLE --message {text}"
+
+[agents]
+planner = "openclaw:devflow"
+reviewer = "openclaw:devflow"
+triage = "openclaw:devflow"
+retro = "openclaw:devflow"
+```
+
+The reviewer independently checks the proposed plan and may send it back for revision.
+It then reviews the implementation diff and gate evidence. Devflow still refuses to merge
+when CI fails, when the reviewed branch changes, or when engine gates fail. Clarification
+questions and escalations still pause the affected ticket.
+
+Run `devflow run --max-tickets 3 --max-minutes 60` in the repository, or schedule that
+command with OpenClaw Automations every few minutes for unattended operation. The queue
+uses a repository lock, so overlapping invocations cannot work the same ticket. When the
+three-ticket checkpoint arrives, reply `continue` to an OpenClaw agent configured to run
+`devflow continue /path/to/repo`; the next scheduled run picks up the queue. You can also
+run that command yourself. The checkpoint is stored locally in `.devflow/state/` and
+survives process restarts.
+
+Use `.devflow/STOP` to pause further work at stage boundaries. Keep your iMessage handle
+and other personal notification settings in your local config, outside public commits.
+
 ## Configure each repository
 
 `devflow init` generates the following files:

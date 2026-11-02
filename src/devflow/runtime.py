@@ -14,7 +14,7 @@ from .notify import make_notifier
 from .router import build_router
 from .store import Store, reset_dry_run_db, state_db_path
 
-ENGINE_ROLES = ("planner", "triage", "retro")
+ENGINE_ROLES = ("planner", "triage", "retro", "reviewer")
 
 
 def build_engine(
@@ -36,7 +36,9 @@ def build_engine(
     queue = board or make_board(cfg)
     if queue is not None and dry_run:
         queue = DryRunBoard(queue)
-    agents = {role: make_agent(cfg.agents[role]) for role in ENGINE_ROLES if role in cfg.agents}
+    agents = {role: make_agent(cfg.agents[role]) for role in ENGINE_ROLES
+              if role in cfg.agents and (role != "reviewer" or
+                                         cfg.agents[role].startswith("openclaw"))}
     engine = Engine(
         cfg, store, DryRunHost(real) if dry_run else real, build_router(cfg, store), agents,
         make_notifier(cfg.notify_command), board=queue, dry_run=dry_run, log=log,

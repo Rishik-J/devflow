@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Autonomous plan review",
+  "type": "object",
+  "required": ["decision", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "decision": {"enum": ["approve", "reject"]},
+    "reason": {"type": "string", "minLength": 1}
+  }
+}
