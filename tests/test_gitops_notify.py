@@ -134,6 +134,15 @@ def test_planner_task_includes_answers_and_feedback_only_when_present():
     assert "Q?" in full and "<<<ANSWERS" in full and "cover negatives" in full
 
 
+def test_planner_task_uses_main_checkout_gate_commands():
+    issue = Issue(1, "t", "b")
+    text = prompts.planner_task(issue, [], "", None,
+                                {".": {"integration": ["python -m pytest tests/test_telemetry.py"]}})
+    assert "<<<CONFIGURED GATES" in text
+    assert "python -m pytest tests/test_telemetry.py" in text
+    assert "ticket worktree may not contain" in text
+
+
 def test_coder_task_always_carries_the_plan_even_when_resuming():
     text = prompts.coder_task({"goal": "g"}, {"tests": []}, "fix X", resuming=True, diff_stat="s")
     assert '"goal": "g"' in text and "fix X" in text and "Continue your earlier work" in text

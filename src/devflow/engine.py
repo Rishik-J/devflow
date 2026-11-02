@@ -340,7 +340,9 @@ class Engine:
         feedback = (self._latest(t, "plan_feedback") or {}).get("text", "")
         previous = self._latest(t, "plan") or {}
         req = self._request(t, "planner",
-                            prompts.planner_task(issue, answers, feedback, previous.get("questions")),
+                            prompts.planner_task(
+                                issue, answers, feedback, previous.get("questions"),
+                                {project.path: project.gates for project in self.cfg.projects}),
                             schema="plan", read_only=True)
         plan = self._plain("planner", req).data
         self._put(t, "plan", plan)
@@ -399,7 +401,13 @@ class Engine:
                 "risk. Approve only if a coding agent could execute it without guessing. "
                 "If rejected, give concrete revision feedback.\n\n"
                 + prompts.ticket_block(issue) + "\n\n"
-                + prompts.fence("PROPOSED PLAN", json.dumps(plan, indent=2)),
+                + prompts.fence("PROPOSED PLAN", json.dumps(plan, indent=2))
+                + "\n\nAuthoritative gates from the main checkout (the ticket worktree may "
+                "not contain the local config file):\n"
+                + json.dumps({project.path: project.gates for project in self.cfg.projects},
+                             indent=2, sort_keys=True)
+                + "\nReject a plan that says a configured integration gate is missing, "
+                "unit-only, or outside this ticket's verification.",
                 schema="plan_review", read_only=True,
             )
             decision = run_structured(reviewer, req, self.cfg.root).data

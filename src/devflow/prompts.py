@@ -55,7 +55,8 @@ def ticket_block(issue: Issue) -> str:
 
 
 def planner_task(
-    issue: Issue, answers: list[str], feedback: str, previous_questions: list[dict] | None
+    issue: Issue, answers: list[str], feedback: str, previous_questions: list[dict] | None,
+    configured_gates: dict[str, dict[str, list[str]]] | None = None,
 ) -> str:
     parts = ["Plan this ticket.", ticket_block(issue)]
     if previous_questions and answers:
@@ -67,6 +68,14 @@ def planner_task(
     if feedback:
         parts += ["The previous plan was rejected or could not be tested. Fix this:",
                   fence("FEEDBACK", feedback)]
+    if configured_gates is not None:
+        parts += [
+            ("Authoritative test gates loaded by the engine from the main checkout's "
+             ".devflow/config.toml. The ticket worktree may not contain that local file. "
+             "Use these exact gate commands in the verification steps; never infer from "
+             "the worktree that a configured gate is absent:"),
+            fence("CONFIGURED GATES", json.dumps(configured_gates, indent=2)),
+        ]
     parts.append("Reply with only the JSON plan.")
     return "\n\n".join(parts)
 
