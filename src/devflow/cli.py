@@ -98,6 +98,16 @@ def _agents(args: argparse.Namespace) -> int:
 
 
 def _ticket(args: argparse.Namespace) -> int:
+    from .detect import repo_root
+    from .runner import ownership
+    root = repo_root(Path(args.path).resolve())
+    if root is None:
+        raise ValueError("not inside a git repository")
+    with ownership(root):
+        return _ticket_owned(args)
+
+
+def _ticket_owned(args: argparse.Namespace) -> int:
     import time
 
     from .agents import AgentError
@@ -335,6 +345,17 @@ def main(argv: list[str] | None = None) -> int:
     g_hooks.add_argument("action", choices=["install", "uninstall", "status"])
     g_hooks.add_argument("path", nargs="?", default=".")
     g_hooks.set_defaults(func=_graph, graph_cmd="hooks")
+
+    from .runner import command as run_queue
+    queue = sub.add_parser("run", help="work Ready tickets and resume approvals in the configured Project")
+    queue.add_argument("path", nargs="?", default=".")
+    queue.add_argument("--dry-run", action="store_true", help="preview queue without launching agents")
+    queue.add_argument("--watch", type=int, default=0, help="poll interval in seconds; omit for one sweep")
+    queue.add_argument("--max-tickets", type=int, default=10)
+    queue.add_argument("--max-minutes", type=float, default=60)
+    queue.add_argument("--max-cost-usd", type=float, default=0,
+                       help="recorded cost ceiling for this invocation; 0 disables it")
+    queue.set_defaults(func=run_queue)
 
     from .learn.cli import run as learn_run
     from .learn.cli import stats as learn_stats

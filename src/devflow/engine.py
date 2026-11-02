@@ -78,6 +78,7 @@ class Engine:
         self.graph_builder, self.dry_run, self.log, self.max_steps = (
             graph_builder, dry_run, log, max_steps)
         self.board = board
+        self.checkpoint: Callable[[], str] = lambda: ""
         self._handlers: dict[State, Callable[[Ticket], None]] = {
             State.NEW: self._new,
             State.REFINING: self._refining,
@@ -102,6 +103,9 @@ class Engine:
         else:
             self._apply_learn_commands(ticket)
         for _ in range(self.max_steps):
+            stop = self.checkpoint()
+            if stop:
+                return Outcome(ticket, "paused", stop)
             if ticket.state in TERMINAL:
                 return Outcome(ticket, "done", ticket.state.value)
             before = ticket.state

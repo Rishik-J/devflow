@@ -19,7 +19,7 @@ plan, writing code, reviewing it, and triaging feedback. See [DESIGN.md](DESIGN.
 | Gates judged against the base commit (pre-existing failures do not block tickets) | done |
 | GitHub Projects board, scheduler, follow-up tickets (`devflow board`) | verified on Project #6 and real ticket #9 |
 | Learning ledger, retro, lesson commands, context-update PRs, stats | implemented |
-| `devflow run` queue runner, budgets and STOP switch | Phase 6 pending |
+| `devflow run` queue runner, recorded-cost/time limits, STOP and exclusive ownership | implemented; queue preview verified on Project #6 |
 
 ## Install
 
@@ -160,3 +160,29 @@ devflow stats
 and opens a PR without merging it. Runtime databases and transcripts remain local.
 Lesson status changes currently affect local runs immediately; the PR distributes a reviewed
 snapshot to other checkouts. Publishing does not itself approve candidate lessons.
+
+## Running the queue
+
+```bash
+cd /path/to/initialised/repo
+devflow run --dry-run              # preview Ready tickets; no model calls or GitHub writes
+devflow run                        # one sweep, then exit
+devflow run --watch 20 --max-tickets 10 --max-minutes 60 --max-cost-usd 5
+```
+
+The queue resumes existing tickets (including approvals and clarifications), then selects
+labelled Ready issues by priority and dependencies. Waiting for a person does not block the next
+Ready issue. Each sweep attempts a ticket once, so transient failures wait for the next sweep
+instead of spinning. Watch mode polls until a limit, an interrupt, or STOP.
+
+Create `.devflow/STOP` in the repo root to stop queue execution at the next stage boundary.
+Remove it and rerun to resume from saved state. A stage already running can finish; STOP does
+not cancel an in-flight model request, command, or merge. Time and recorded-cost ceilings have
+the same boundary semantics and can overshoot by one stage. Costs exclude unmetered OpenClaw
+calls and may use token estimates, so they are operational limits rather than billing guarantees.
+Zero `--max-cost-usd` (the default) disables the cost ceiling. Defaults are 10 distinct tickets
+and 60 minutes per invocation. The ownership lock lives in the common git directory, so another
+`devflow run` or `devflow ticket` cannot concurrently mutate the same repo, even from a worktree.
+
+This is an on-demand process for macOS/Linux. It has no automatically installed daemon; run it
+in a terminal when wanted. Human plan and merge approvals still follow the repo configuration.
