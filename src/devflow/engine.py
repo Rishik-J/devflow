@@ -206,7 +206,13 @@ class Engine:
         return rows[-1]["payload"] if rows else None
 
     def _count(self, ticket: Ticket, kind: str) -> int:
-        return len(self.store.stage_results(ticket.id, kind))
+        rows = self.store.stage_results(ticket.id, kind)
+        if kind == "plan":
+            resumed = [event["ts"] for event in self.store.events(ticket.id, "transition")
+                       if event.get("reason") == "resumed"]
+            if resumed:
+                rows = [row for row in rows if row["ts"] > resumed[-1]]
+        return len(rows)
 
     def _say(self, ticket: Ticket, text: str, number: int | None = None) -> None:
         self.host.comment(number or ticket.issue or 0, text)
@@ -251,6 +257,11 @@ class Engine:
         self._refresh_graph(wt)  # best effort; digest says if absent
         system = prompts.role_prompt(self.cfg.root, role) + "\n\n" + graphctx.agent_preamble(wt, files)
         system += self._context_for(ticket, role, files or [])
+        gates = {project.path: project.gates for project in self.cfg.projects}
+        system += ("\n\n## Authoritative configured gates\n"
+                   "These commands are loaded from the main checkout's .devflow/config.toml. "
+                   "That file may be absent from this ticket worktree; do not infer that a gate "
+                   "is missing from its absence.\n" + json.dumps(gates, sort_keys=True))
         if schema:
             system += "\n\n" + prompts.schema_block(schema, self.cfg.root)
         return AgentRequest(
@@ -318,7 +329,8 @@ class Engine:
 
     def _refining(self, t: Ticket) -> None:
         if self._count(t, "plan") >= MAX_PLAN_CYCLES:
-            raise _Escalate(f"the plan was reworked {MAX_PLAN_CYCLES} times without settling")
+            raise _Escalate(f"the plan was reworked {MAX_PLAN_CYCLES} times since the last "
+                            "resume without settling")
         setup = setup_worktree(self.cfg, self._wt(t))
         if not setup.ok and setup.results:
             raise _Escalate("environment setup failed: " + setup.results[-1].output_tail[-400:])

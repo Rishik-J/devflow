@@ -156,6 +156,20 @@ def drive_to_merge_gate(e: Env, **kw) -> Engine:
     return eng
 
 
+def test_plan_revision_budget_resets_after_resume(env):
+    engine = env.engine()
+    engine.run(1)
+    ticket = env.ticket()
+    for attempt in range(2, 5):
+        env.store.add_stage_result(ticket.id, "plan", attempt, True, PLAN)
+    assert engine._count(ticket, "plan") == 4
+    env.store.add_event(ticket.id, "transition",
+                        {"to": "refining", "actor": "human:alice", "reason": "resumed"})
+    assert engine._count(ticket, "plan") == 0
+    env.store.add_stage_result(ticket.id, "plan", 5, True, PLAN)
+    assert engine._count(ticket, "plan") == 1
+
+
 # ---------------------------------------------------------------- the whole pipeline
 
 
