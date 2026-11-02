@@ -99,7 +99,11 @@ def ensure_fresh(
     if not force and bool(current) and graph_path(root).exists() and current == _stored(root):
         nodes, edges = _counts(root)
         return _report(GraphStatus(False, True, nodes, edges, "up to date", current, "fresh"))
-    result = builder(root)
+    try:
+        result = builder(root)
+    except Exception:  # noqa: BLE001 - a broken builder is "unavailable"; its text is never recorded
+        return _report(GraphStatus(False, False, message="graph builder error",
+                                   fingerprint=current, state="unavailable"))
     if not result.ok:
         state = "failed" if result.ran and current else "unavailable"
         return _report(GraphStatus(result.ran, False, message=result.message or "build failed",

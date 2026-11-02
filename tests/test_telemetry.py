@@ -410,7 +410,15 @@ def test_raising_builder_does_not_break_the_ticket(capture, tmp_path):
     try:
         state = engine.run(1).ticket.state
         assert state is baseline.engine().run(1).ticket.state is State.AWAITING_PLAN_APPROVAL
-        assert root_of(capture)["devflow.graph_status"] == "unavailable"
+        attrs = root_of(capture)
+        assert attrs["devflow.graph_status"] == "unavailable"
+        assert len(attrs["devflow.graph_fingerprint"]) == 12
+        assert "devflow.graph_nodes" not in attrs
+        spans = graph_spans(capture)
+        assert spans and all(g["devflow.graph.status"] == "unavailable"
+                             and g["devflow.graph.refreshed"] is False
+                             and len(g["devflow.graph.fingerprint"]) == 12
+                             and "devflow.graph.nodes" not in g for g in spans)
         assert "secret-token-xyz" not in capture.read_text()
     finally:
         env.store.close()

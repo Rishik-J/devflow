@@ -255,3 +255,16 @@ def test_non_git_directory_is_unavailable_with_empty_fingerprint(tmp_path: Path,
     assert attrs["devflow.graph.status"] == "unavailable"
     assert attrs["devflow.graph.fingerprint"] == ""
     assert "devflow.graph.nodes" not in attrs
+
+
+def test_raising_builder_reports_unavailable_on_span(repo: Path, trace_log: Path):
+    def broken(root: Path):
+        raise RuntimeError("secret-token-xyz")
+    st = graphctx.ensure_fresh(repo, builder=broken)
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "unavailable" and not st.ok
+    assert attrs["devflow.graph.status"] == "unavailable"
+    assert attrs["devflow.graph.refreshed"] is False
+    assert len(attrs["devflow.graph.fingerprint"]) == 12
+    assert "devflow.graph.nodes" not in attrs
+    assert "secret-token-xyz" not in trace_log.read_text() and "error.type" not in attrs
