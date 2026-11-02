@@ -113,6 +113,7 @@ class Engine:
             self.store.save_ticket(ticket)
         else:
             self._apply_learn_commands(ticket)
+        telemetry.trace_metadata(base_sha=ticket.base_sha or None, remote=self.cfg.remote)
         for _ in range(self.max_steps):
             stop = self.checkpoint()
             if stop:
@@ -247,7 +248,7 @@ class Engine:
         cwd: Path | None = None, files: list[str] | None = None, session: str | None = None,
     ) -> AgentRequest:
         wt = cwd or self._wt(ticket)
-        graphctx.ensure_fresh(wt, builder=self.graph_builder)  # best effort; digest says if absent
+        self._refresh_graph(wt)  # best effort; digest says if absent
         system = prompts.role_prompt(self.cfg.root, role) + "\n\n" + graphctx.agent_preamble(wt, files)
         system += self._context_for(ticket, role, files or [])
         if schema:
@@ -257,6 +258,20 @@ class Engine:
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,
             mcp=graphctx.mcp_config(wt), mcp_overrides=graphctx.codex_overrides(wt),
         )
+
+    def _refresh_graph(self, wt: Path) -> None:
+        """Freshness check that can never stop a ticket; records graph provenance on the trace."""
+        try:
+            status = graphctx.ensure_fresh(wt, builder=self.graph_builder)
+        except Exception:  # noqa: BLE001 - a broken graph builder must not stop the ticket
+            telemetry.trace_metadata(graph_status="unavailable", graph_fingerprint="",
+                                     graph_nodes=None, graph_edges=None)
+            return
+        known = status.state in ("fresh", "refreshed", "failed")
+        telemetry.trace_metadata(
+            graph_status=status.state, graph_fingerprint=status.fingerprint,
+            graph_nodes=status.nodes if known else None,
+            graph_edges=status.edges if known else None)
 
     def _context_for(self, ticket: Ticket, role: str, files: list[str]) -> str:
         """The repo brief and the lessons that fit this role and these files."""
@@ -295,6 +310,7 @@ class Engine:
         wt = worktree.create(self.cfg.root, self.cfg.worktree_root, t.issue or 0, issue.title,
                              self.cfg.default_branch)
         t.branch, t.worktree, t.base_sha = wt.branch, str(wt.path), wt.base_sha
+        telemetry.trace_metadata(base_sha=t.base_sha)
         self.store.save_ticket(t)
         self._move(t, State.REFINING, "engine", "started")
 

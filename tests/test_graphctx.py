@@ -183,3 +183,120 @@ def test_real_graphify_rebuilds_after_an_edit(tmp_path: Path):
     assert second.refreshed and second.nodes > first.nodes
     assert "extra" in (root / "graphify-out" / "graph.json").read_text()
     git(root, "status", "--short")
+
+
+# ---- graph.refresh span provenance -------------------------------------------------------
+
+@pytest.fixture
+def trace_log(tmp_path):
+    from devflow import telemetry
+    log = tmp_path / "graph-traces.jsonl"
+    telemetry.configure(settings={"enabled": True, "log_file": str(log)})
+    yield log
+    telemetry.configure(settings={})
+
+
+def refresh_spans(log: Path) -> list[dict]:
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    return [r["attributes"] for r in rows if r["name"] == "graph.refresh"]
+
+
+def test_span_marks_noop_check_as_fresh(repo: Path, trace_log: Path):
+    b = Builder()
+    graphctx.ensure_fresh(repo, builder=b)
+    st = graphctx.ensure_fresh(repo, builder=b)
+    first, second = refresh_spans(trace_log)
+    assert b.calls == 1 and st.state == "fresh"
+    assert second["devflow.graph.refreshed"] is False
+    assert second["devflow.graph.status"] == "fresh"
+    assert second["devflow.graph.nodes"] == 1 and second["devflow.graph.edges"] == 0
+    fp = second["devflow.graph.fingerprint"]
+    assert len(fp) == 12 and int(fp, 16) >= 0
+    assert first["devflow.graph.status"] == "refreshed"
+
+
+def test_span_marks_rebuild_as_refreshed(repo: Path, trace_log: Path):
+    st = graphctx.ensure_fresh(repo, builder=Builder())
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "refreshed" and st.refreshed and st.ok and st.nodes == 1
+    assert st.edges == 0 and st.message == "rebuilt"
+    assert attrs["devflow.graph.refreshed"] is True
+    assert attrs["devflow.graph.status"] == "refreshed"
+    assert attrs["devflow.graph.nodes"] == 1 and isinstance(attrs["devflow.graph.edges"], int)
+    assert len(attrs["devflow.graph.fingerprint"]) == 12
+
+
+def test_span_marks_failed_build_without_leaking_message(repo: Path, trace_log: Path):
+    st = graphctx.ensure_fresh(repo, builder=Builder(ok=False))
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "failed"
+    assert attrs["devflow.graph.status"] == "failed"
+    assert attrs["devflow.graph.refreshed"] is False
+    assert attrs["devflow.graph.nodes"] == 0 and attrs["devflow.graph.edges"] == 0
+    assert len(attrs["devflow.graph.fingerprint"]) == 12
+    assert "boom" not in trace_log.read_text()
+
+
+def test_span_marks_missing_builder_as_unavailable_without_counts(repo: Path, trace_log: Path):
+    st = graphctx.ensure_fresh(repo, builder=lambda r: GraphResult(False, False))
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "unavailable"
+    assert attrs["devflow.graph.status"] == "unavailable"
+    assert attrs["devflow.graph.refreshed"] is False
+    assert "devflow.graph.nodes" not in attrs and "devflow.graph.edges" not in attrs
+
+
+def test_non_git_directory_is_unavailable_with_empty_fingerprint(tmp_path: Path, trace_log: Path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    st = graphctx.ensure_fresh(plain, builder=lambda r: GraphResult(False, False))
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "unavailable" and st.fingerprint == ""
+    assert attrs["devflow.graph.status"] == "unavailable"
+    assert attrs["devflow.graph.fingerprint"] == ""
+    assert "devflow.graph.nodes" not in attrs
+
+
+def test_raising_builder_reports_unavailable_on_span(repo: Path, trace_log: Path):
+    def broken(root: Path):
+        raise RuntimeError("secret-token-xyz")
+    st = graphctx.ensure_fresh(repo, builder=broken)
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "unavailable" and not st.ok
+    assert attrs["devflow.graph.status"] == "unavailable"
+    assert attrs["devflow.graph.refreshed"] is False
+    assert len(attrs["devflow.graph.fingerprint"]) == 12
+    assert "devflow.graph.nodes" not in attrs
+    assert "secret-token-xyz" not in trace_log.read_text() and "error.type" not in attrs
+
+
+def test_git_timeout_reports_unavailable_on_span(repo: Path, trace_log: Path, monkeypatch):
+    import subprocess
+
+    def timeout(*a, **k):
+        raise subprocess.TimeoutExpired("git", 60)
+    monkeypatch.setattr(graphctx, "fingerprint", timeout)
+    st = graphctx.ensure_fresh(repo, builder=Builder())
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "unavailable" and not st.ok
+    assert attrs["devflow.graph.status"] == "unavailable"
+    assert attrs["devflow.graph.refreshed"] is False
+    assert attrs["devflow.graph.fingerprint"] == ""
+    assert "devflow.graph.nodes" not in attrs and "error.type" not in attrs
+
+
+def test_fingerprint_write_failure_reports_failed_on_span(repo: Path, trace_log: Path, monkeypatch):
+    real = Path.write_text
+
+    def deny(self, *a, **k):
+        if self.name == graphctx.FINGERPRINT_FILE:
+            raise PermissionError("secret-path")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "write_text", deny)
+    st = graphctx.ensure_fresh(repo, builder=Builder())
+    (attrs,) = refresh_spans(trace_log)
+    assert st.state == "failed" and not st.ok
+    assert attrs["devflow.graph.status"] == "failed"
+    assert attrs["devflow.graph.refreshed"] is False
+    assert attrs["devflow.graph.nodes"] == 0 and len(attrs["devflow.graph.fingerprint"]) == 12
+    assert "secret-path" not in trace_log.read_text() and "error.type" not in attrs

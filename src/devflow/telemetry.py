@@ -14,11 +14,12 @@ import secrets
 import sys
 import time
 import urllib.request
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, is_dataclass
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _current: ContextVar = ContextVar("devflow_span", default=None)
 _settings: dict = {}
@@ -174,6 +175,113 @@ def flush():
         print("devflow: trace export unavailable; local trace log retained", file=sys.stderr)
 
 
+_root: ContextVar = ContextVar("devflow_root_span", default=None)
+
+GRAPH_STATES = ("fresh", "refreshed", "failed", "unavailable")
+FINGERPRINT_CHARS = 12
+_HEX_SHA = re.compile(r"[0-9a-f]{7,64}")
+_HEX = re.compile(r"[0-9a-f]*")
+_REMOTE_SCHEMES = ("http", "https", "ssh", "git", "git+ssh", "ssh+git")
+_REMOTE_PART = re.compile(r"[A-Za-z0-9._~-]+")
+
+
+def sanitize_remote(url) -> str:
+    """host/owner/repo from a git remote, with userinfo, port, query and fragment dropped.
+
+    Returns "" when the URL cannot be parsed cleanly, so a partial value is never emitted.
+    """
+    if not isinstance(url, str) or not url.strip() or len(url) > 500:
+        return ""
+    text = url.strip()
+    try:
+        if "://" in text:
+            parts = urlsplit(text)
+            if parts.scheme.lower() not in _REMOTE_SCHEMES:
+                return ""
+            host, path = parts.hostname or "", parts.path
+        else:
+            match = re.fullmatch(r"(?:[^@/\s:]+@)?([A-Za-z0-9.\-]+):(?!//)([^?#\s]+)", text)
+            if not match:
+                return ""
+            host, path = match[1], match[2]
+    except ValueError:
+        return ""
+    path = path.strip("/")
+    path = path.removesuffix(".git")
+    segments = path.split("/")
+    if not host or not _REMOTE_PART.fullmatch(host) or len(segments) < 2:
+        return ""
+    if not all(_REMOTE_PART.fullmatch(s) for s in segments):
+        return ""
+    return f"{host.lower()}/{'/'.join(segments)}"
+
+
+def _count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _valid(key: str, value):
+    """Validated value for an allowlisted provenance key, else None (dropped)."""
+    if key == "base_sha":
+        return value if isinstance(value, str) and _HEX_SHA.fullmatch(value) else None
+    if key == "fingerprint":
+        if isinstance(value, str) and _HEX.fullmatch(value):
+            return value[:FINGERPRINT_CHARS]
+        return None
+    if key == "status":
+        return value if value in GRAPH_STATES else None
+    if key in ("nodes", "edges"):
+        return value if _count(value) else None
+    if key == "refreshed":
+        return value if isinstance(value, bool) else None
+    if key == "remote":
+        return sanitize_remote(value) or None
+    return None
+
+
+def annotate(**attrs) -> None:
+    """Set validated graph attributes (refreshed, status, nodes, edges, fingerprint) on the current span."""
+    with suppress(Exception):  # telemetry must never affect the workflow
+        current = _current.get()
+        if current is None or not _settings.get("enabled"):
+            return
+        for key, value in attrs.items():
+            if key not in ("refreshed", "status", "nodes", "edges", "fingerprint"):
+                continue
+            clean = _valid(key, value)
+            if clean is not None:
+                current.set(**{f"devflow.graph.{key}": clean})
+
+
+_TRACE_KEYS = {"base_sha": "base_sha", "remote": "remote", "graph_status": "status",
+               "graph_fingerprint": "fingerprint", "graph_nodes": "nodes", "graph_edges": "edges"}
+
+
+def trace_metadata(**values) -> None:
+    """Set allowlisted provenance on the ticket root (and current span, so later children inherit).
+
+    A value of None clears the key. Invalid values and unlisted keys are dropped.
+    """
+    with suppress(Exception):
+        root = _root.get()
+        if root is None or not _settings.get("enabled"):
+            return
+        targets = [root] if _current.get() in (None, root) else [root, _current.get()]
+        for key, value in values.items():
+            kind = _TRACE_KEYS.get(key)
+            if kind is None:
+                continue
+            clean = None if value is None else _valid(kind, value)
+            names = (f"langfuse.trace.metadata.{key}", f"devflow.{key}")
+            if value is None:
+                for target in targets:
+                    for name in names:
+                        target.attributes.pop(name, None)
+            elif clean is not None:
+                for target in targets:
+                    target.set(**dict.fromkeys(names, clean))
+
+
 def ticket_run(function):
     @wraps(function)
     def wrapped(self, issue):
@@ -184,7 +292,11 @@ def ticket_run(function):
             "devflow.issue": issue, "langfuse.observation.type": "agent",
         }) as trace:
             trace.content(input={"repository": repo, "issue": issue})
-            result = function(self, issue)
+            token = _root.set(trace)
+            try:
+                result = function(self, issue)
+            finally:
+                _root.reset(token)
             trace.content(output={"state": result.ticket.state.value, "status": result.status,
                                   "reason": result.reason if hasattr(result, "reason") else ""})
             trace.set(**{"devflow.state": result.ticket.state.value, "devflow.result": result.status})

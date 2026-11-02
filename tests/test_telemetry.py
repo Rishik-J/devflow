@@ -287,3 +287,170 @@ def test_openclaw_reports_public_usage_without_reading_other_sessions(detailed_c
     assert call["attributes"]["devflow.reported_model"] == "test-model"
     assert call["attributes"]["gen_ai.usage.input_tokens"] == 24
     assert "provider-1" in detailed_capture.read_text()
+
+
+# ---- repository and graph provenance ------------------------------------------------------
+
+from devflow.graphify import GraphResult
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://user:secret@github.com/o/r.git?x=1#f", "github.com/o/r"),
+    ("git@github.com:o/r.git", "github.com/o/r"),
+    ("ssh://git@host.example:2222/o/r", "host.example/o/r"),
+    ("file://localhost/Users/alice/private-repo.git", ""), ("file:///Users/alice/repo.git", ""),
+    ("ftp://host.example/o/r", ""),
+    ("", ""), ("not a url", ""), ("/local/path/origin.git", ""), ("https://github.com/", ""),
+])
+def test_remote_sanitizer(url, expected):
+    out = telemetry.sanitize_remote(url)
+    assert out == expected and "secret" not in out and "@" not in out
+
+
+def test_helpers_validate_and_drop_bad_values(capture):
+    with telemetry.span("probe") as probe:
+        telemetry.annotate(status="bogus", nodes=-1, edges=True, fingerprint="xyz", refreshed="yes", other=1)
+        assert not any(k.startswith("devflow.graph.") for k in probe.attributes)
+        telemetry.annotate(status="fresh", nodes=3, fingerprint="a" * 40)
+        assert probe.attributes["devflow.graph.fingerprint"] == "a" * 12
+        assert probe.attributes["devflow.graph.nodes"] == 3
+    telemetry.trace_metadata(base_sha="abc123")  # no root: no-op, no raise
+
+
+def test_helpers_noop_when_disabled():
+    telemetry.configure(settings={})
+    telemetry.annotate(status="fresh")
+    telemetry.trace_metadata(base_sha="abc1234")
+
+
+def root_of(path):
+    return [r for r in rows(path) if r["name"] == "ticket.run"][-1]["attributes"]
+
+
+def graph_spans(path):
+    return [r["attributes"] for r in rows(path) if r["name"] == "graph.refresh"]
+
+
+def test_trace_metadata_validates_on_root(capture):
+    class Cfg:
+        name = "t"
+    class Eng:
+        cfg = Cfg()
+        @telemetry.ticket_run
+        def run(self, issue):
+            telemetry.trace_metadata(base_sha="not hex!", graph_status="nope", graph_nodes=-2,
+                                     graph_fingerprint="ZZ", prompt="leak", base_sha2="abc1234")
+            telemetry.trace_metadata(base_sha="deadbeef", graph_fingerprint="f" * 30)
+            from types import SimpleNamespace
+            return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    Eng().run(1)
+    attrs = root_of(capture)
+    assert attrs["langfuse.trace.metadata.base_sha"] == "deadbeef"
+    assert attrs["devflow.graph_fingerprint"] == "f" * 12
+    allowed = {"base_sha", "remote", "graph_status", "graph_fingerprint", "graph_nodes", "graph_edges",
+               "repo", "issue"}
+    assert {k.rsplit(".", 1)[1] for k in attrs if k.startswith("langfuse.trace.metadata.")} <= allowed
+    assert "leak" not in capture.read_text()
+
+
+def run_ticket(tmp_path, builder=None, remote=None):
+    env = Env(tmp_path / "ticket")
+    if remote:
+        env.cfg.remote = remote
+    engine = env.engine()
+    if builder:
+        engine.graph_builder = builder
+    return env, engine
+
+
+def test_default_engine_records_base_sha_and_unavailable_graph(capture, tmp_path):
+    env, engine = run_ticket(tmp_path)
+    try:
+        assert engine.run(1).ticket.state is State.AWAITING_PLAN_APPROVAL
+        base = env.ticket().base_sha
+        attrs = root_of(capture)
+        assert base and attrs["langfuse.trace.metadata.base_sha"] == base
+        assert attrs["devflow.base_sha"] == base
+        assert attrs["langfuse.trace.metadata.repo"] == "t"
+        assert attrs["devflow.graph_status"] == "unavailable"
+        assert "devflow.graph_nodes" not in attrs
+        assert all(g["devflow.graph.status"] == "unavailable" and g["devflow.graph.refreshed"] is False
+                   for g in graph_spans(capture))
+        # resumed run: base sha comes from the stored ticket
+        env.say("alice", "/approve")
+        env.engine().run(1)
+        assert root_of(capture)["devflow.base_sha"] == base
+        later = [r for r in rows(capture) if r["name"].startswith("agent.")]
+        assert later and all(r["attributes"].get("langfuse.trace.metadata.base_sha") == base
+                             for r in later[-1:])
+    finally:
+        env.store.close()
+
+
+def test_ok_builder_records_refreshed_counts_and_latest_check_wins(capture, tmp_path):
+    def builder(root):
+        return GraphResult(True, True, nodes=7, edges=4)
+    env, engine = run_ticket(tmp_path, builder)
+    try:
+        engine.run(1)
+        attrs = root_of(capture)
+        assert attrs["devflow.graph_status"] in ("refreshed", "fresh")
+        assert attrs["devflow.graph_nodes"] == 7 and attrs["devflow.graph_edges"] == 4
+        assert len(attrs["devflow.graph_fingerprint"]) == 12
+        statuses = [g["devflow.graph.status"] for g in graph_spans(capture)]
+        assert statuses[0] == "refreshed"
+        assert attrs["devflow.graph_status"] == statuses[-1]
+    finally:
+        env.store.close()
+
+
+def test_raising_builder_does_not_break_the_ticket(capture, tmp_path):
+    def broken(root):
+        raise RuntimeError("secret-token-xyz")
+    env, engine = run_ticket(tmp_path, broken)
+    baseline = Env(tmp_path / "baseline")
+    try:
+        state = engine.run(1).ticket.state
+        assert state is baseline.engine().run(1).ticket.state is State.AWAITING_PLAN_APPROVAL
+        attrs = root_of(capture)
+        assert attrs["devflow.graph_status"] == "unavailable"
+        assert len(attrs["devflow.graph_fingerprint"]) == 12
+        assert "devflow.graph_nodes" not in attrs
+        spans = graph_spans(capture)
+        assert spans and all(g["devflow.graph.status"] == "unavailable"
+                             and g["devflow.graph.refreshed"] is False
+                             and len(g["devflow.graph.fingerprint"]) == 12
+                             and "devflow.graph.nodes" not in g for g in spans)
+        assert "secret-token-xyz" not in capture.read_text()
+    finally:
+        env.store.close()
+        baseline.store.close()
+
+
+def test_remote_credentials_never_reach_the_trace(capture, tmp_path):
+    env, engine = run_ticket(tmp_path, remote="https://user:p4ssw0rd@github.com/owner/repo.git")
+    try:
+        engine.run(1)
+        assert root_of(capture)["devflow.remote"] == "github.com/owner/repo"
+        text = capture.read_text()
+        assert "p4ssw0rd" not in text and "user:" not in text
+    finally:
+        env.store.close()
+
+
+@pytest.mark.parametrize("content", [False, True])
+def test_provenance_present_with_and_without_content_capture(tmp_path, content):
+    log = tmp_path / "t.jsonl"
+    telemetry.configure(settings={"enabled": True, "log_file": str(log), "capture_content": content})
+    env, engine = run_ticket(tmp_path, lambda r: GraphResult(True, True, nodes=2, edges=1))
+    try:
+        engine.run(1)
+        attrs = root_of(log)
+        meta = {k: v for k, v in attrs.items() if k.startswith("langfuse.trace.metadata.")}
+        assert {"base_sha", "graph_status", "graph_fingerprint", "graph_nodes", "graph_edges"} <= {
+            k.rsplit(".", 1)[1] for k in meta}
+        for value in meta.values():
+            assert "multiply" not in str(value) and "calc.py" not in str(value)
+    finally:
+        env.store.close()
+        telemetry.configure(settings={})
