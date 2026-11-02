@@ -656,7 +656,7 @@ class Engine:
         lines = "\n".join(f"- #{f.issue.number} {f.candidate.title}" for f in report.filed)
         return ("\n\nFiled in Backlog (move to Ready to work them):\n" + lines)
 
-    def _learn(self, t: Ticket, outcome: str, reason: str = "") -> None:
+    def _learn(self, t: Ticket, outcome: str, reason: str = "", *, model: str | None = None) -> None:
         """Capture what the ticket taught and file candidate lessons. Never fails the ticket."""
         learning = self.cfg.learning
         if not learning.enabled or "retro" not in self.agents or self.dry_run:
@@ -668,13 +668,15 @@ class Engine:
             return
         try:
             record = capture(self.store, t, outcome, reason)
+            self.store.add_event(t.id, "run_record", {"key": key, "record": record})
+            graphctx.ensure_fresh(self.cfg.root, builder=self.graph_builder)
             ledger = Ledger(ledger_path(self.cfg.root))
             ledger.start_run()
             report = retro.distill(
                 self.agents["retro"], record, ledger, root=self.cfg.root,
                 system=prompts.role_prompt(self.cfg.root, "retro"), cwd=self.cfg.root,
                 ticket=t.issue or 0, promote_after=learning.promote_after,
-                timeout_s=self.cfg.stage_timeout_minutes * 60)
+                timeout_s=self.cfg.stage_timeout_minutes * 60, model=model)
             ledger.retire_stale(learning.max_idle_runs)
             ledger.save()
         except (AgentError, OSError, ValueError, KeyError) as exc:

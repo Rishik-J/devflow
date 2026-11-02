@@ -336,8 +336,30 @@ def main(argv: list[str] | None = None) -> int:
     g_hooks.add_argument("path", nargs="?", default=".")
     g_hooks.set_defaults(func=_graph, graph_cmd="hooks")
 
+    from .learn.cli import run as learn_run
+    from .learn.cli import stats as learn_stats
+
+    learn = sub.add_parser("learn", help="inspect, approve, retire or publish repository lessons")
+    actions = learn.add_subparsers(dest="learn_action", required=True)
+    for action in ("list", "approve", "reject", "publish", "retro"):
+        command = actions.add_parser(action)
+        if action in ("approve", "reject"):
+            command.add_argument("lesson_id")
+        if action == "retro":
+            command.add_argument("issue", type=int)
+            command.add_argument("--model", help="model override for this retro run only")
+        command.add_argument("path", nargs="?", default=".")
+        command.set_defaults(func=learn_run)
+    stats = sub.add_parser("stats", help="summarise ticket results and recorded model usage")
+    stats.add_argument("path", nargs="?", default=".")
+    stats.set_defaults(func=learn_stats)
+
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

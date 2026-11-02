@@ -118,7 +118,9 @@ class Ledger:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         ordered = sorted(self.lessons.values(), key=lambda lesson: lesson.id)
-        self.path.write_text("".join(lesson.to_json() + "\n" for lesson in ordered))
+        temporary = self.path.with_suffix(".jsonl.tmp")
+        temporary.write_text("".join(lesson.to_json() + "\n" for lesson in ordered))
+        temporary.replace(self.path)
         self.meta_path.write_text(json.dumps({"runs": self.runs}))
 
     def by_status(self, status: str) -> list[Lesson]:

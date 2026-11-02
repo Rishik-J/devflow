@@ -12,13 +12,14 @@ plan, writing code, reviewing it, and triaging feedback. See [DESIGN.md](DESIGN.
 | `devflow doctor` (check required tools) | done |
 | Ticket state machine with retry caps | done |
 | Foundations: SQLite store, config loader, schema validation, worktrees, env setup, gate runner, diff guard | done |
-| Code graph kept fresh on every edit + agent context (`devflow graph ...`) | done, not yet wired into agents |
+| Code graph kept fresh on every edit + agent context (`devflow graph ...`) | wired into agent requests, including retro |
 | Agent drivers: Claude Code, Codex, Cursor and OpenClaw, all verified live | done |
 | Usage-based routing of coding work across claude / codex / cursor (`devflow agents`) | done |
 | Single-ticket pipeline: refine, test design, implement, gates, review, merge (`devflow ticket N`) | done; verified live with real agents on a scratch repo |
 | Gates judged against the base commit (pre-existing failures do not block tickets) | done |
-| GitHub Projects board, scheduler, follow-up tickets (`devflow board`) | built and tested against recorded `gh` output; not yet run against a live Project |
-| Learning loop, `devflow run` | not built yet (see plan) |
+| GitHub Projects board, scheduler, follow-up tickets (`devflow board`) | verified on Project #6 and real ticket #9 |
+| Learning ledger, retro, lesson commands, context-update PRs, stats | implemented |
+| `devflow run` queue runner, budgets and STOP switch | Phase 6 pending |
 
 ## Install
 
@@ -135,3 +136,27 @@ uv run --no-project --with ruff ruff check .
 Per-repo behavior lives in templates (`src/devflow/templates`) and schemas
 (`src/devflow/schemas`), so improving a prompt improves every repo the next time it is
 initialized with `--force`.
+
+## Learning from runs
+
+Newly initialised repos configure `retro = "openclaw:devflow"` under `[agents]`.
+For an existing repo, add that setting without overwriting your `[github]` settings.
+Run records are stored locally even when the retro model fails. Lessons start as candidates;
+they become active after independent evidence from two tickets or explicit human approval.
+Active lessons are selected by role and file scope for later prompts.
+
+```bash
+devflow learn retro 9                     # replay a finished ticket, once per outcome
+devflow learn retro 9 --model google-vertex/gemini-3.8-flash # one-run model override
+devflow learn list
+devflow learn approve L-xxxxxxxx          # activate after inspecting evidence in the ledger
+devflow learn reject L-xxxxxxxx           # retire while preserving the record
+devflow learn publish                     # open a context PR for human review
+devflow stats
+```
+
+`learn publish` includes only `.devflow/context/repo-brief.md` and
+`.devflow/learnings/ledger.jsonl`. It commits in a separate checkout, pushes a context branch,
+and opens a PR without merging it. Runtime databases and transcripts remain local.
+Lesson status changes currently affect local runs immediately; the PR distributes a reviewed
+snapshot to other checkouts. Publishing does not itself approve candidate lessons.

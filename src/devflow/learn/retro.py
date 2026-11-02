@@ -10,7 +10,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import graphctx
 from ..agents import Agent, AgentRequest, run_structured
+from ..context import load_brief
 from ..prompts import fence, schema_block
 from .ledger import Ledger, Lesson, LessonRejected
 
@@ -33,7 +35,7 @@ def build_task(record: dict, ledger: Ledger) -> str:
                 for x in list(ledger.lessons.values())[:EXISTING_LIMIT] if x.status != "retired"]
     parts = ["Here is the record of one finished ticket.", fence("RUN RECORD", text)]
     if existing:
-        parts += ["Lessons that already exist (do not repeat them):",
+        parts += ["Existing lessons (return an exact statement again only if this ticket adds independent evidence):",
                   fence("EXISTING LESSONS", "\n".join(existing))]
     parts.append("Reply with only the JSON lessons object. An empty list is fine.")
     return "\n\n".join(parts)
@@ -41,12 +43,14 @@ def build_task(record: dict, ledger: Ledger) -> str:
 
 def distill(
     agent: Agent, record: dict, ledger: Ledger, *, root: Path, system: str, cwd: Path,
-    ticket: int, promote_after: int, timeout_s: float = 600,
+    ticket: int, promote_after: int, timeout_s: float = 600, model: str | None = None,
 ) -> RetroReport:
+    system += "\n\n" + load_brief(root) + "\n\n" + graphctx.agent_preamble(cwd, record.get("plan", {}).get("files", []))
     req = AgentRequest(
         role="retro", prompt=build_task(record, ledger), cwd=cwd,
         system=system + "\n\n" + schema_block("lesson", root), schema="lesson", read_only=True,
-        timeout_s=timeout_s,
+        timeout_s=timeout_s, model=model, mcp=graphctx.mcp_config(cwd),
+        mcp_overrides=graphctx.codex_overrides(cwd),
     )
     result = run_structured(agent, req, root)
     report = RetroReport(proposed=len(result.data["lessons"]))

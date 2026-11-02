@@ -61,8 +61,11 @@ class OpenClawAgent:
 
     def build(self, req: AgentRequest, message_file: Path, key: str) -> list[str]:
         timeout = int(req.timeout_s)
-        return [self.binary, "agent", "--agent", self.agent_id, "--session-key", key,
+        cmd = [self.binary, "agent", "--agent", self.agent_id, "--session-key", key,
                 "--message-file", str(message_file), "--json", "--timeout", str(timeout)]
+        if req.model:
+            cmd += ["--model", req.model]
+        return cmd
 
     def run(self, req: AgentRequest) -> AgentResult:
         key = self.session_key(req)

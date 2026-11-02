@@ -322,3 +322,9 @@ def test_run_process_feeds_stdin(tmp_path: Path):
 def test_run_process_timeout_kills_group(tmp_path: Path):
     p = run_process(["/bin/sh", "-c", "sleep 30"], tmp_path, dict(os.environ), 1, None)
     assert p.timed_out and p.code is None
+
+
+def test_openclaw_passes_a_per_run_model_override(tmp_path: Path):
+    command = OpenClawAgent().build(req(tmp_path, model="google-vertex/gemini-3.8-flash"),
+                                    tmp_path / "message.md", "isolated")
+    assert command[command.index("--model") + 1] == "google-vertex/gemini-3.8-flash"
