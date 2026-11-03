@@ -66,33 +66,31 @@ def _stats(values):
     return {"count": len(values), "mean": round(sum(values) / len(values), 3), "max": round(max(values), 3)}
 
 
-def aggregate(records, strict=True):
-    """Aggregate metrics over all records. ``strict`` keeps the original behaviour for the plain command."""
+def aggregate(records):
+    """Aggregate metrics over all records, ignoring non-object records and tolerating incomplete ones."""
     durations = defaultdict(list)
     calls, usage, outcomes = Counter(), Counter(), Counter()
-    synthetic = 0
+    synthetic = spans = 0
     for record in records:
-        if not strict and not isinstance(record, dict):
+        if not isinstance(record, dict):
             continue
-        name = record["name"] if strict else str(record.get("name", ""))
-        attributes = record["attributes"] if strict else _attrs(record)
+        spans += 1
+        name = str(record.get("name", ""))
+        attributes = _attrs(record)
         if attributes.get("langfuse.trace.metadata.synthetic") == "true":
             synthetic += 1
             continue
         if name.startswith("stage.") and name != "stage.result":
-            if strict:
-                durations[name].append((record["end_ns"] - record["start_ns"]) / 1e9)
-            else:
-                seconds = _seconds(record)
-                if seconds is not None:
-                    durations[name].append(seconds)
+            seconds = _seconds(record)
+            if seconds is not None:
+                durations[name].append(seconds)
         if name == "agent.call" or name.startswith("agent."):
-            calls[attributes.get("devflow.agent", "unknown")] += 1
+            calls[str(attributes.get("devflow.agent", "unknown"))] += 1
         if name == "usage.recorded":
-            usage[attributes.get("devflow.agent", "unknown")] += attributes.get("devflow.cost_usd", 0)
+            usage[str(attributes.get("devflow.agent", "unknown"))] += _cost(attributes.get("devflow.cost_usd"))
         if name == "ticket.run":
-            outcomes[attributes.get("devflow.result", record.get("status"))] += 1
-    return {"spans": len(records), "synthetic_spans_excluded": synthetic, "ticket_turn_outcomes": dict(outcomes),
+            outcomes[str(attributes.get("devflow.result", record.get("status")))] += 1
+    return {"spans": spans, "synthetic_spans_excluded": synthetic, "ticket_turn_outcomes": dict(outcomes),
             "agent_cli_calls": dict(calls), "coding_cost_usd_recorded": dict(usage),
             "stage_latency_seconds": {name: _stats(values) for name, values in durations.items()}}
 
@@ -104,6 +102,10 @@ def _attrs(record):
 
 def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _cost(value):
+    return value if _is_number(value) and math.isfinite(value) else 0
 
 
 def _seconds(record):
