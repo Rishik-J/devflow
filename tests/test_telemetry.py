@@ -388,18 +388,35 @@ def test_default_engine_records_base_sha_and_unavailable_graph(capture, tmp_path
 
 
 def test_ok_builder_records_refreshed_counts_and_latest_check_wins(capture, tmp_path):
+    calls = []
+    written = {"nodes": [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+               "links": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"}]}
+
     def builder(root):
-        return GraphResult(True, True, nodes=7, edges=4)
-    env, engine = run_ticket(tmp_path, builder)
+        calls.append(root)
+        out = root / "graphify-out"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "graph.json").write_text(json.dumps(written))
+        return GraphResult(True, True, nodes=len(written["nodes"]), edges=len(written["links"]))
+
+    env = Env(tmp_path / "ticket", plan_gate=False)
+    engine = env.engine(max_steps=4)  # bounded: stop before the coder edits the worktree
+    engine.graph_builder = builder
     try:
         engine.run(1)
+        spans = graph_spans(capture)
+        # first request builds the graph; the second sees an unchanged tree -> fingerprint hit
+        assert [g["devflow.graph.status"] for g in spans][:2] == ["refreshed", "fresh"]
+        assert spans[0]["devflow.graph.refreshed"] is True
+        assert spans[1]["devflow.graph.refreshed"] is False
+        assert len(calls) == 1
+        assert spans[0]["devflow.graph.fingerprint"] == spans[1]["devflow.graph.fingerprint"]
         attrs = root_of(capture)
-        assert attrs["devflow.graph_status"] in ("refreshed", "fresh")
-        assert attrs["devflow.graph_nodes"] == 7 and attrs["devflow.graph_edges"] == 4
+        assert attrs["devflow.graph_status"] == "fresh"
+        assert attrs["langfuse.trace.metadata.graph_status"] == "fresh"
+        assert attrs["devflow.graph_nodes"] == 3 and attrs["devflow.graph_edges"] == 2
         assert len(attrs["devflow.graph_fingerprint"]) == 12
-        statuses = [g["devflow.graph.status"] for g in graph_spans(capture)]
-        assert statuses[0] == "refreshed"
-        assert attrs["devflow.graph_status"] == statuses[-1]
+        assert attrs["devflow.graph_fingerprint"] == spans[-1]["devflow.graph.fingerprint"]
     finally:
         env.store.close()
 
