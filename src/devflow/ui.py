@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import re
+import secrets
 import socketserver
 import sys
 import threading
@@ -13,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 from typing import Any
 
+from . import command_center
 from .analytics import collect_analytics
 from .detect import repo_root
 from .loadconfig import ConfigError, load_config
@@ -228,6 +231,49 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .bar-fill.human { background: var(--yellow); }
     .bar-val { width: 90px; text-align: right; color: #8b949e; }
     .muted { color: #8b949e; font-size: 12px; }
+    .cc { display: none; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+    .cc-list { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .cc-item { padding: 12px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .cc-item:last-child { border-bottom: 0; }
+    .cc-item:hover, .cc-item.sel { background: #1c2128; }
+    .cc-item .t { font-size: 13px; color: var(--heading); margin: 2px 0; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; background: #6e7681; }
+    .tone-ok { background: #3fb950; } .tone-warn { background: var(--yellow); }
+    .tone-bad { background: var(--red); } .tone-info { background: var(--accent); }
+    .diag { border-left: 3px solid var(--accent); }
+    .diag.warn { border-left-color: var(--yellow); } .diag.bad { border-left-color: var(--red); }
+    .diag.ok { border-left-color: #3fb950; }
+    .diag h2 { font-size: 18px; color: var(--heading); margin-bottom: 6px; }
+    .needs { margin-top: 12px; padding: 10px 12px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+    .needs code, .evidence code { background: #21262d; padding: 2px 6px; border-radius: 4px; color: var(--heading); }
+    .evidence { margin: 12px 0 0 18px; font-size: 12.5px; color: #8b949e; }
+    .flow { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .flow-inputs, .flow-out { display: flex; gap: 14px; font-size: 12px; color: #8b949e; flex-wrap: wrap; }
+    .flow-inputs small, .flow-out small { color: #6e7681; }
+    .flow-nodes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; margin: 14px 0; }
+    .fnode { position: relative; background: #1c2128; border: 1px solid var(--border); padding: 12px; margin-right: 22px;
+      border-radius: 8px; text-align: left; min-height: 84px; }
+    .fnode:last-child { margin-right: 0; }
+    .fnode:not(:last-child)::after { content: '→'; position: absolute; right: -19px; top: 50%; transform: translateY(-50%); color: #6e7681; }
+    .fnode .n { font-size: 11px; color: #6e7681; }
+    .fnode strong { display: block; color: var(--heading); font-size: 14px; }
+    .fnode small { color: #8b949e; font-size: 12px; }
+    .fnode .st { position: absolute; top: 8px; right: 10px; font-size: 11px; color: #8b949e; }
+    .fnode.done { border-color: rgba(63,185,80,.5); } .fnode.done .st { color: #3fb950; }
+    .fnode.working { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .fnode.waiting_human, .fnode.stalled { border-color: var(--yellow); box-shadow: 0 0 0 1px var(--yellow); }
+    .fnode.blocked, .fnode.escalated { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+    .fnode.pending { opacity: .55; }
+    .fnode.current .st { font-weight: 600; color: var(--heading); }
+    .runlog { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 10px;
+      font: 12px/1.5 ui-monospace, Menlo, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+    .btn { background: #238636; color: #fff; border: 1px solid rgba(240,246,252,.1); padding: 7px 14px; border-radius: 6px;
+      font-size: 13px; font-weight: 500; cursor: pointer; margin-right: 8px; }
+    .btn.secondary { background: #21262d; color: var(--heading); border-color: var(--border); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .cc-main > div { margin-bottom: 16px; }
+    @media (max-width: 900px) { .cc { grid-template-columns: 1fr; } .flow-nodes { grid-template-columns: 1fr; gap: 10px; }
+      .fnode { margin-right: 0; } .fnode::after { display: none; } }
     #analytics-view { display: none; }
     .live-dot {
       width: 8px;
@@ -261,6 +307,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <div class="tabs">
     <button class="tab active" id="tab-board" onclick="showView('board')">Board</button>
+    <button class="tab" id="tab-cc" onclick="showView('cc')">Command Center</button>
     <button class="tab" id="tab-analytics" onclick="showView('analytics')">Analytics</button>
   </div>
 
@@ -289,6 +336,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
   </div>
 
+  <div class="cc" id="cc-view">
+    <div class="cc-list" id="cc-list"></div>
+    <div class="cc-main" id="cc-main"><div class="muted">Select a ticket.</div></div>
+  </div>
+
   <div id="analytics-view">
     <div class="stats-bar" id="a-tiles"></div>
     <div class="panel-title">Tickets</div>
@@ -304,14 +356,79 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <script>
+    const TOKEN = '__DEVFLOW_TOKEN__';
+    let ccSel = null;
+    const STATUS_TEXT = {working: 'working', waiting_human: 'needs you', stalled: 'stalled', blocked: 'blocked',
+      escalated: 'escalated', done: 'done', cancelled: 'cancelled', visited: 'visited', pending: 'upcoming'};
+
+    async function fetchCC() {
+      try {
+        const list = await (await fetch('/api/tickets')).json();
+        const box = document.getElementById('cc-list');
+        if (ccSel === null && list.length) ccSel = list[0].issue;
+        box.innerHTML = list.length ? list.map(t => `<div class="cc-item ${t.issue === ccSel ? 'sel' : ''}" onclick="selectTicket(${t.issue})">` +
+          `<span class="dot tone-${escapeHtml(t.tone)}"></span><strong>#${t.issue}</strong> <span class="muted">${escapeHtml(STATUS_TEXT[t.status] || t.status)} · ${fmtDur(t.since_seconds)}</span>` +
+          `<div class="t">${escapeHtml(t.title)}</div><div class="muted">${escapeHtml(t.headline)}</div></div>`).join('') :
+          '<div class="cc-item muted">No tickets in the local store yet.</div>';
+        if (ccSel !== null) await fetchCCDetail();
+      } catch (err) { console.error('Failed to fetch tickets:', err); }
+    }
+    function selectTicket(n) { ccSel = n; fetchCC(); }
+
+    async function fetchCCDetail() {
+      const res = await fetch('/api/tickets/' + ccSel);
+      if (!res.ok) { document.getElementById('cc-main').innerHTML = '<div class="muted">Ticket not found.</div>'; return; }
+      renderCC(await res.json());
+    }
+
+    function copyText(text) { try { navigator.clipboard.writeText(text); } catch (e) {} }
+
+    function renderCC(d) {
+      const g = d.diagnosis, loops = d.graph.loops;
+      const needs = g.needs ? `<div class="needs">Needs <strong>${escapeHtml(g.needs.who)}</strong>: comment <code>${escapeHtml(g.needs.command)}</code> on ${escapeHtml(g.needs.where)}.` +
+        (g.needs.note ? `<div class="muted" style="margin-top:4px">${escapeHtml(g.needs.note)}</div>` : '') +
+        ` <button class="btn secondary" style="margin:6px 0 0" onclick="copyText(${escapeHtml(JSON.stringify(g.needs.command.split(' ')[0]))})">Copy command</button></div>` : '';
+      const ev = g.evidence.length ? '<ul class="evidence">' + g.evidence.map(e => `<li>${escapeHtml(e)}</li>`).join('') + '</ul>' : '';
+      const nodes = d.graph.nodes.map(n => `<div class="fnode ${n.status} ${n.current ? 'current' : ''}">` +
+        `<span class="st">${n.current ? '● ' : ''}${escapeHtml(STATUS_TEXT[n.status] || n.status)}${n.visits > 1 ? ' ×' + n.visits : ''}</span>` +
+        `<span class="n">${escapeHtml(n.num)}</span><strong>${escapeHtml(n.title)}</strong><small>${escapeHtml(n.sub)}</small></div>`).join('');
+      const inputs = d.graph.inputs.map(i => `<span>◦ ${escapeHtml(i.title)} <small>${escapeHtml(i.sub)}</small></span>`).join('');
+      const run = d.run;
+      const running = run.state === 'running';
+      const canResume = g.resumable !== false && !['done', 'cancelled'].includes(g.status);
+      const rl = run.state === 'idle' ? '' : `<div class="muted" style="margin-top:8px">Last UI run: ${escapeHtml(run.state)}${run.dry_run ? ' (dry run)' : ''}${run.exit_code !== null && run.exit_code !== undefined ? ', exit ' + run.exit_code : ''}</div><div class="runlog">${escapeHtml(run.log || '')}</div>`;
+      const rows = d.timeline.slice().reverse().map(r => `<tr><td>${escapeHtml(r.to)}</td><td>${escapeHtml(r.actor)}</td><td style="text-align:left">${escapeHtml(r.reason)}</td><td>${fmtDur(r.seconds_in_state)}${r.open ? ' (now)' : ''}</td></tr>`).join('');
+      document.getElementById('cc-main').innerHTML =
+        `<div class="a-card diag ${escapeHtml(g.tone)}"><div class="muted">#${d.issue} · ${escapeHtml(d.title)} · in <code>${escapeHtml(g.state)}</code> for ${fmtDur(g.since_seconds)}</div>` +
+        `<h2>${escapeHtml(g.headline)}</h2><div>${escapeHtml(g.detail)}</div>${needs}${ev}</div>` +
+        `<div class="flow"><div class="flow-inputs">${inputs}</div><div class="flow-nodes">${nodes}</div>` +
+        `<div class="flow-out"><span>↶ Review findings return to the coding agent <small>round ${loops.review_to_coder}, attempt ${loops.gate_retries}</small></span><span>◦ Langfuse <small>optional local trace</small></span></div></div>` +
+        `<div class="a-card"><div class="panel-title" style="margin-top:0">Resume workflow</div>` +
+        `<div class="muted" style="margin-bottom:8px">Runs <code>devflow ticket ${d.issue}</code> once on this machine. Human gates still need their GitHub comment first.</div>` +
+        `<button class="btn" ${canResume && !running ? '' : 'disabled'} onclick="resumeTicket(${d.issue}, false)">${running ? 'Running…' : 'Resume now'}</button>` +
+        `<button class="btn secondary" ${canResume && !running ? '' : 'disabled'} onclick="resumeTicket(${d.issue}, true)">Dry run</button>` +
+        (g.resumable === false ? '<span class="muted">Another runner owns this repository.</span>' : '') + rl + `</div>` +
+        `<div><div class="panel-title">History</div><table class="a-table"><tr><th>State</th><th>Actor</th><th style="text-align:left">Reason</th><th>Time in state</th></tr>${rows}</table></div>`;
+    }
+
+    async function resumeTicket(n, dry) {
+      if (!dry && !confirm('Resume #' + n + '? This runs agents and may write to GitHub.')) return;
+      const res = await fetch('/api/tickets/' + n + '/resume' + (dry ? '?dry_run=1' : ''), {method: 'POST', headers: {'X-Devflow-Token': TOKEN}});
+      if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Resume failed'); }
+      fetchCC();
+    }
+
     let view = 'board';
     function showView(name) {
       view = name;
       document.getElementById('board-view').style.display = name === 'board' ? '' : 'none';
       document.getElementById('analytics-view').style.display = name === 'analytics' ? 'block' : 'none';
+      document.getElementById('cc-view').style.display = name === 'cc' ? 'grid' : 'none';
+      document.getElementById('tab-cc').classList.toggle('active', name === 'cc');
       document.getElementById('tab-board').classList.toggle('active', name === 'board');
       document.getElementById('tab-analytics').classList.toggle('active', name === 'analytics');
       if (name === 'analytics') fetchAnalytics();
+      if (name === 'cc') fetchCC();
     }
 
     async function fetchAnalytics() {
@@ -483,7 +600,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     fetchState();
-    setInterval(() => { fetchState(); if (view === 'analytics') fetchAnalytics(); }, 3000);
+    setInterval(() => { fetchState(); if (view === 'analytics') fetchAnalytics(); if (view === 'cc') fetchCC(); }, 3000);
   </script>
 </body>
 </html>
@@ -568,13 +685,17 @@ def collect_state(root: Path) -> dict[str, Any]:
     }
 
 
+_TICKET = re.compile(r"^/api/tickets/(\d+)(/resume)?$")
+
+
 class UiHandler(http.server.BaseHTTPRequestHandler):
     root: Path
+    token: str = secrets.token_urlsafe(24)
 
-    def _send_json(self, produce) -> None:
+    def _send_json(self, produce, status: int = 200) -> None:
         try:
             payload = json.dumps(produce()).encode("utf-8")
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-cache")
@@ -592,13 +713,24 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         if url.path == "/api/state":
             self._send_json(lambda: collect_state(self.root))
             return
+        if url.path == "/api/tickets":
+            self._send_json(lambda: command_center.list_tickets(self.root))
+            return
+        found = _TICKET.match(url.path)
+        if found and not found.group(2):
+            detail = command_center.ticket_detail(self.root, int(found.group(1)))
+            if detail is None:
+                self._send_json(lambda: {"error": "ticket not found"}, 404)
+            else:
+                self._send_json(lambda: detail)
+            return
         if url.path == "/api/analytics":
             repo = parse_qs(url.query).get("repo", [None])[0]
             self._send_json(lambda: collect_analytics(self.root, repo))
             return
 
         if self.path == "/" or self.path.startswith("/?"):
-            payload = HTML_TEMPLATE.encode("utf-8")
+            payload = HTML_TEMPLATE.replace("__DEVFLOW_TOKEN__", self.token).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
@@ -608,6 +740,30 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_response(404)
         self.end_headers()
+
+    def do_POST(self) -> None:
+        url = urlsplit(self.path)
+        found = _TICKET.match(url.path)
+        if not (found and found.group(2)):
+            self.send_response(404)
+            self.end_headers()
+            return
+        host = self.headers.get("Host", "").rsplit(":", 1)[0]
+        if (self.headers.get("X-Devflow-Token") != self.token
+                or host not in ("127.0.0.1", "localhost", "[::1]")):
+            self._send_json(lambda: {"error": "forbidden"}, 403)
+            return
+        issue = int(found.group(1))
+        dry = parse_qs(url.query).get("dry_run", ["0"])[0] == "1"
+        if command_center.ticket_detail(self.root, issue) is None:
+            self._send_json(lambda: {"error": "ticket not found"}, 404)
+            return
+        try:
+            result = command_center.start_resume(self.root, issue, dry_run=dry)
+        except RuntimeError as exc:
+            self._send_json(lambda: {"error": str(exc)}, 409)
+            return
+        self._send_json(lambda: result, 202)
 
     def log_message(self, format: str, *args: Any) -> None:
         # Suppress routine HTTP request logging to keep console clean
