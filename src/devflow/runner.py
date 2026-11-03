@@ -127,7 +127,8 @@ class QueueRunner:
                 prompt=("Select only issue numbers from this eligible Backlog list. "
                         "Use repository context and the product goal to prioritize. "
                         "Return JSON only.\n\n"
-                        + prompts.fence("BACKLOG ISSUES", json.dumps(candidates))),
+                        + prompts.fence("BACKLOG ISSUES", json.dumps(candidates))
+                        + "\n\n" + prompts.schema_block("backlog_selection", root)),
                 timeout_s=180,
             )
             choice = run_structured(agent, request, root).data
