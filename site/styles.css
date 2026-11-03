@@ -40,9 +40,9 @@ em { color: var(--accent); font-style: normal; }
 .text-link { font-size: .85rem; font-weight: 550; }
 .hero-note { margin: 1.5rem 0 0; font: .7rem/1.9 var(--mono); color: var(--muted); }
 .ticket-preview { border: 1px solid #48523f; background: var(--panel); box-shadow: 12px 12px 0 #1b2318; position: relative; }
-.window-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); color: var(--muted); font: .58rem/1.5 var(--mono); letter-spacing: .07em; }
+.window-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); color: var(--muted); font: .75rem/1.5 var(--mono); letter-spacing: .07em; }
 .ticket-heading { padding: 1.8rem 1.8rem 1.2rem; }
-.ticket-heading .eyebrow { font-size: .6rem; margin-bottom: .6rem; }
+.ticket-heading .eyebrow { font-size: .75rem; margin-bottom: .6rem; }
 .ticket-heading h2 { font-size: 1.55rem; letter-spacing: -.035em; margin-bottom: .6rem; }
 .ticket-heading p:last-child { color: var(--muted); font-size: .8rem; margin-bottom: 0; }
 code, pre { font-family: var(--mono); }
@@ -51,10 +51,10 @@ code { font-size: .88em; }
 .preview-steps li { display: flex; align-items: center; gap: .9rem; padding: 1rem .6rem; border-top: 1px solid var(--line); position: relative; }
 .step-symbol { color: var(--muted); font: .7rem var(--mono); width: 1.25rem; flex-shrink: 0; }
 .preview-steps strong { display: block; font-size: .8rem; font-weight: 600; }
-.preview-steps div > span { display: block; font-size: .65rem; color: var(--muted); margin-top: .15rem; }
+.preview-steps div > span { display: block; font-size: .75rem; color: var(--muted); margin-top: .15rem; }
 .preview-steps .approval { background: #222e1b; border-color: #415431; }
 .approval strong, .approval .step-symbol { color: var(--accent); }
-.gate-tag { margin-left: auto; color: var(--accent); font: .48rem/1.4 var(--mono); letter-spacing: .04em; white-space: nowrap; }
+.gate-tag { margin-left: auto; color: var(--accent); font: .75rem/1.4 var(--mono); letter-spacing: .04em; white-space: nowrap; }
 .ticket-result { display: flex; align-items: center; gap: 1rem; padding: 1.3rem 1.8rem; color: var(--accent); }
 .ticket-result > span { font-size: 1.5rem; }
 .ticket-result p { color: var(--muted); font-size: .65rem; margin: 0; }
@@ -73,7 +73,7 @@ code { font-size: .88em; }
 .ledger-number { color: var(--accent); font: .85rem var(--mono); padding-top: .25rem; }
 .workflow-ledger h3 { font-size: 1.15rem; letter-spacing: -.02em; margin-bottom: .6rem; font-weight: 550; }
 .workflow-ledger p { color: var(--muted); font-size: .9rem; max-width: 690px; margin: 0; }
-.role-label { text-align: right; color: var(--muted); font: .62rem/1.6 var(--mono); padding-top: .35rem; }
+.role-label { text-align: right; color: var(--muted); font: .75rem/1.6 var(--mono); padding-top: .35rem; }
 .section-footnote { font-size: .75rem; color: var(--muted); margin: 1.5rem 0 0; }
 .section-footnote a { display: inline-block; margin-left: .5rem; color: var(--text); }
 .context-section { background: #1a2218; border-block: 1px solid var(--line); padding-block: 90px; }
@@ -139,9 +139,9 @@ pre code { font-size: inherit; }
   .site-header { min-height: 88px; gap: .75rem; flex-wrap: wrap; padding-block: 1rem; }
   .wordmark { font-size: 1.3rem; }
   .site-header nav { gap: 1rem; }
-  .site-header nav a { font-size: .75rem; }
+  .site-header nav a { font-size: .8rem; padding-block: .8rem; }
   .site-header .version { display: none; }
-  .repo-link { padding: .4rem .6rem; }
+  .repo-link { padding: .65rem .6rem; }
   .hero { grid-template-columns: 1fr; gap: 3rem; padding-block: 54px 64px; }
   h1 { font-size: clamp(3.5rem, 12vw, 5rem); }
   .hero-description { max-width: 540px; }
