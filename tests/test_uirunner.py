@@ -137,10 +137,10 @@ def test_expected_http_error_removes_only_that_response_and_its_console_noise():
 
 def test_case_fails_at_teardown_even_when_the_test_assertions_passed():
     page = FakePage()
-    with pytest.raises(AssertionError, match="console error: oops"):
-        with observe(page, "t::a", ["UC1"]):
-            page.emit("console", console("error", "oops"))
-            assert True  # the test's own assertions pass
+    with (pytest.raises(AssertionError, match="console error: oops"),
+          observe(page, "t::a", ["UC1"])):
+        page.emit("console", console("error", "oops"))
+        assert True  # the test's own assertions pass
     case = uirunner._STATE["cases"][0]
     assert case.ok is False and case.use_case_ids == ["UC1"]
     assert case.console == [{"type": "error", "text": "oops"}]
@@ -238,11 +238,10 @@ def test_real_browser_catches_console_error_pageerror_and_http_500(tmp_path):
             pytest.skip(f"browser unavailable: {exc}")
         try:
             page = browser.new_page()
-            with pytest.raises(AssertionError) as info:
-                with observe(page, "t::real", ["UC1"]):
-                    page.goto(f"http://127.0.0.1:{server.server_address[1]}/")
-                    page.wait_for_function("true")
-                    page.wait_for_timeout(300)
+            with pytest.raises(AssertionError) as info, observe(page, "t::real", ["UC1"]):
+                page.goto(f"http://127.0.0.1:{server.server_address[1]}/")
+                page.wait_for_function("true")
+                page.wait_for_timeout(300)
             message = str(info.value)
             assert "console error: bad" in message
             assert "page error: " in message and "uncaught" in message
@@ -267,6 +266,6 @@ def test_json_of_plugin_report_is_stable(tmp_path):
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", str(tmp_path / "test_nothing.py"), "-q",
          "-p", "devflow.uirunner", "-p", "no:cacheprovider"],
-        capture_output=True, text=True, env=env, cwd=tmp_path)
+        check=False, capture_output=True, text=True, env=env, cwd=tmp_path)
     assert proc.returncode == 0, proc.stdout
     assert json.loads(report.read_text()) == {"cases": []}

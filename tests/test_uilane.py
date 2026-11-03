@@ -361,7 +361,7 @@ def evaluation(*pairs, findings=()):
 
 def test_reconcile_blocks_fail_missing_and_blocking_findings():
     rep = report_of(case(uc=["UC1", "UC2"]))
-    fixed, blocking = uilane.reconcile(MATRIX, rep, evaluation(("UC1", "pass"), ("UC2", "fail")))
+    _, blocking = uilane.reconcile(MATRIX, rep, evaluation(("UC1", "pass"), ("UC2", "fail")))
     assert [b["id"] for b in blocking] == ["ui-use-case-UC2"]
     assert all(b["blocking"] for b in blocking)
     _, blocking = uilane.reconcile(MATRIX, rep, evaluation(("UC1", "pass")))
@@ -405,7 +405,7 @@ def test_modules_import_without_playwright():
     code = ("import sys\nsys.modules['playwright'] = None\n"
             "sys.modules['playwright.sync_api'] = None\n"
             "import devflow.uilane, devflow.uirunner\nprint('ok')\n")
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+    proc = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True,
                           cwd=ROOT)
     assert proc.returncode == 0 and "ok" in proc.stdout, proc.stderr
 
@@ -415,12 +415,33 @@ def test_ui_directory_is_ignored_by_default_and_collected_on_request():
     code = ("import os, runpy, sys\n"
             f"ns = runpy.run_path({str(conftest)!r})\n"
             "print(ns['collect_ignore_glob'])\n")
-    for flag, expected in (("", ["ui/*"]), ("1", [])):
+    for flag, expected in (("", [str(ROOT / "tests/ui/*")]), ("1", [])):
         env = {**os.environ, "DEVFLOW_UI_LANE": flag}
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+        proc = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True,
                               env=env, cwd=ROOT)
         assert proc.returncode == 0, proc.stderr
         assert eval(proc.stdout.strip()) == expected
+
+
+def test_ui_collection_glob_matches_absolute_paths():
+    import fnmatch
+    import runpy
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"DEVFLOW_UI_LANE": ""}):
+        globs = runpy.run_path(str(ROOT / "tests/conftest.py"))["collect_ignore_glob"]
+    scenario = ROOT / "tests/ui/test_dashboard_ui.py"
+    assert any(fnmatch.fnmatch(str(scenario), pattern) for pattern in globs)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_ui_collection_opt_in_in_a_real_pytest_process(enabled):
+    env = {**os.environ, "DEVFLOW_UI_LANE": "1" if enabled else ""}
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests", "--collect-only", "-q"],
+        check=False, capture_output=True, text=True, env=env, cwd=ROOT, timeout=60)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert ("tests/ui/test_dashboard_ui.py::" in proc.stdout) is enabled
 
 
 # ---------------------------------------------------------------- the shipped scenarios (AC4)
@@ -436,7 +457,7 @@ def test_dashboard_scenarios_produce_a_valid_report(tmp_path: Path):
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/ui", "-p", "devflow.uirunner", "-q",
          "-p", "no:cacheprovider"],
-        capture_output=True, text=True, env=env, cwd=ROOT, timeout=300)
+        check=False, capture_output=True, text=True, env=env, cwd=ROOT, timeout=300)
     if "UI lane unavailable" in proc.stdout:
         pytest.skip("Playwright browsers are not installed")
     assert proc.returncode == 0, proc.stdout[-3000:]

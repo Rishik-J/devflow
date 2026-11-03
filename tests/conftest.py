@@ -7,7 +7,10 @@ import pytest
 
 # The browser scenarios need Playwright and a browser, which the default gates do not have.
 # Run them on purpose with: DEVFLOW_UI_LANE=1 python -m pytest tests/ui -p devflow.uirunner
-collect_ignore_glob = [] if os.environ.get("DEVFLOW_UI_LANE") == "1" else ["ui/*"]
+collect_ignore_glob = (
+    [] if os.environ.get("DEVFLOW_UI_LANE") == "1"
+    else [str(Path(__file__).parent / "ui" / "*")]
+)
 
 
 def git_init(path: Path) -> Path:
