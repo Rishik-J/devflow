@@ -357,8 +357,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def collect_state(root: Path) -> dict[str, Any]:
-    cfg = load_config(root)
-    slug = f"{cfg.board.owner}/{cfg.name}" if cfg.board.owner else cfg.name
+    try:
+        cfg = load_config(root)
+        name = cfg.name
+        slug = f"{cfg.board.owner}/{cfg.name}" if cfg.board.owner else cfg.name
+        project = cfg.board.project
+    except ConfigError:
+        cfg = None
+        name = root.name or "devflow"
+        slug = name
+        project = None
 
     # Read local store tickets
     local_tickets: dict[int, dict[str, Any]] = {}
@@ -382,7 +390,7 @@ def collect_state(root: Path) -> dict[str, Any]:
         "Done": [],
     }
 
-    if cfg.board.project:
+    if cfg and cfg.board.project:
         from .board import GhBoard
         try:
             board = GhBoard(slug, cfg.board.owner, cfg.board.project)
@@ -400,7 +408,7 @@ def collect_state(root: Path) -> dict[str, Any]:
                 if item.issue in local_tickets:
                     info.update(local_tickets[item.issue])
                 columns[status].append(info)
-        except Exception as exc:
+        except Exception:  # noqa: BLE001
             # Fall back to local tickets
             for issue, details in local_tickets.items():
                 columns["In progress"].append({
@@ -419,9 +427,9 @@ def collect_state(root: Path) -> dict[str, Any]:
             })
 
     return {
-        "repo": cfg.name,
+        "repo": name,
         "repo_slug": slug,
-        "project": cfg.board.project,
+        "project": project,
         "columns": columns,
     }
 
@@ -440,7 +448,7 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 self.wfile.write(payload)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 err = json.dumps({"error": str(exc)}).encode("utf-8")
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
