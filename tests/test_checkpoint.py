@@ -16,7 +16,8 @@ def test_three_merges_pause_until_acknowledged(tmp_path):
     assert [item["issue"] for item in reached["completed"]] == [1, 2, 3]
     assert checkpoint.merged(tmp_path, 4, "7", "Fourth") is None
     assert checkpoint.acknowledge(tmp_path)
-    assert checkpoint.read(tmp_path) == {"pending": False, "completed": []}
+    assert checkpoint.read(tmp_path) == {"pending": False, "completed": [],
+                                         "needs_triage": True}
     assert not checkpoint.acknowledge(tmp_path)
 
 
@@ -56,6 +57,25 @@ def test_failed_checkpoint_delivery_retries_on_next_run(tmp_path):
         assert checkpoint.read(env.repo)["notified"]
         runner.notify_pending()
         assert engine.notifier.calls == 2
+    finally:
+        env.store.close()
+
+
+def test_openclaw_selects_next_ready_batch_after_acknowledgment(tmp_path):
+    env = Env(tmp_path / "case", plan_gate=False, merge_gate=False)
+    try:
+        env.host.add_issue(2, "Improve observability", "Add a focused metric.")
+        board = FakeBoard()
+        board.put(2, "Backlog", title="Improve observability")
+        triage = FakeAgent({"backlog_selection": [
+            {"issue_numbers": [2], "reason": "Small and valuable."},
+        ]}, name="openclaw:devflow")
+        checkpoint.write(env.repo, {"pending": False, "completed": [],
+                                    "needs_triage": True})
+        runner = QueueRunner(env.engine(board=board, triage=triage), RunLimits())
+        runner.triage_after_acknowledgment()
+        assert board.status_of(2) == "Ready"
+        assert not checkpoint.read(env.repo).get("needs_triage")
     finally:
         env.store.close()
 

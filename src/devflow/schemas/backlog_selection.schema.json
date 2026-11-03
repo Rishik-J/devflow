@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Next autonomous ticket batch",
+  "type": "object",
+  "required": ["issue_numbers", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "issue_numbers": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {"type": "integer", "minimum": 1}
+    },
+    "reason": {"type": "string", "minLength": 1}
+  }
+}

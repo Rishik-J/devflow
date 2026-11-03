@@ -189,7 +189,9 @@ uses a repository lock, so overlapping invocations cannot work the same ticket. 
 three-ticket checkpoint arrives, reply `continue` to an OpenClaw agent configured to run
 `devflow continue /path/to/repo`; the next scheduled run picks up the queue. You can also
 run that command yourself. The checkpoint is stored locally in `.devflow/state/` and
-survives process restarts.
+survives process restarts. In autonomous mode, the next run asks OpenClaw to select up to
+three eligible follow-up issues from Backlog and moves those issues to Ready. The engine
+checks the returned issue numbers against the actual Project items before changing status.
 
 Use `.devflow/STOP` to pause further work at stage boundaries. Keep your iMessage handle
 and other personal notification settings in your local config, outside public commits.

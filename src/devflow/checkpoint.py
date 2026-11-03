@@ -19,6 +19,8 @@ def read(root: Path) -> dict:
             if isinstance(data.get("message"), str):
                 result["message"] = data["message"]
                 result["notified"] = bool(data.get("notified"))
+            if data.get("needs_triage"):
+                result["needs_triage"] = True
             return result
     except (OSError, ValueError, TypeError):
         pass
@@ -47,5 +49,5 @@ def acknowledge(root: Path) -> bool:
     data = read(root)
     if not data["pending"]:
         return False
-    write(root, {"pending": False, "completed": []})
+    write(root, {"pending": False, "completed": [], "needs_triage": True})
     return True
