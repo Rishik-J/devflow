@@ -280,3 +280,24 @@ single-machine use, without high availability.
 The local Compose configuration is based on the upstream deployment, with private generated
 credentials, different host ports and no exposure of internal databases. Enterprise-only
 Langfuse features are not configured.
+
+## Trace-completeness gate
+
+`devflow.tracecheck.check_trace_completeness(rows)` validates exported span records offline.
+For each engine invocation (one `ticket.run` root per `trace_id`) it checks that every span
+reaches the root through existing parents (no orphans, dangling parents or cycles) and that all
+records share one `langfuse.session.id`. Across the ticket it requires the `stage.refining`
+(plan), `stage.test_design`, `stage.implementing`, `stage.gates` and `stage.in_review` spans as
+direct children of the root with a matching `devflow.state`, and `agent.*`, `gate.result` and
+`state.transition` spans attached under stage spans. The required set is the `REQUIRED_STAGES`
+constant.
+
+The trace-completeness gate runs against the real fake-agent lifecycle in `tests/test_telemetry.py` and is part of
+the normal test suite and CI. Run it locally with no network or Langfuse:
+
+```bash
+python -m pytest tests/test_telemetry.py -k trace_completeness
+```
+
+A violation reads like `slice 2: required stage span 'stage.gates' (gates) missing` or
+`slice 1: span 'stage.implementing' (id=ab12) parent 'zz99' not found`; the test failure lists all of them.
