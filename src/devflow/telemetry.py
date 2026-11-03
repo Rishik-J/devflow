@@ -274,6 +274,10 @@ def _valid(key: str, value):
         return value if value in ("fresh", "stale", "unbuilt") else None
     if key in ("nodes", "edges"):
         return value if _count(value) else None
+    if key == "slice_status":
+        return value if value in ("injected", "unavailable") else None
+    if key == "slice_count":
+        return value if _count(value) else None
     if key == "refreshed":
         return value if isinstance(value, bool) else None
     if key == "remote":
@@ -297,7 +301,8 @@ def annotate(**attrs) -> None:
 
 _TRACE_KEYS = {"base_sha": "base_sha", "remote": "remote", "graph_status": "status",
                "graph_fingerprint": "fingerprint", "graph_nodes": "nodes", "graph_edges": "edges",
-               "graph_staleness": "staleness"}
+               "graph_staleness": "staleness", "slice_status": "slice_status",
+               "slice_seeds": "slice_count", "slice_nodes": "slice_count"}
 
 
 def trace_metadata(**values) -> None:
