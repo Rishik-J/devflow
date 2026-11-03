@@ -3,10 +3,10 @@ const traceStages = [
     phase: "PLAN / 01",
     name: "stage.refining",
     description:
-      "OpenClaw turns the issue into a plan with acceptance criteria. The engine records the handoff and waits for approval when that gate is enabled.",
+      "OpenClaw turns the issue into a plan with acceptance criteria. A focused graph slice can surface callers and tests before work starts; the engine waits for approval when configured.",
     component: "OpenClaw planner",
     child: "agent.<driver>.planner",
-    evidence: "Plan, questions, approval state",
+    evidence: "Plan, graph slice, questions, approval state",
     note: "Supplied prompts and final responses require opt-in content capture.",
   },
   {
@@ -23,20 +23,20 @@ const traceStages = [
     phase: "VERIFY / 03",
     name: "stage.gates",
     description:
-      "Devflow runs configured checks in a separate checkout and records each gate result before review can pass.",
+      "Devflow runs configured checks against the coding worktree, prioritizes graph-matched pytest files when supported, and records each gate result. Review verifies the candidate in a detached checkout.",
     component: "Devflow test engine",
-    child: "gate.result",
-    evidence: "Gate type, exit status, output",
+    child: "gate.result · gate.order",
+    evidence: "Gate type, ordering, exit status, output",
     note: "Gate outcomes appear in metadata mode. Commands and output require opt-in content capture.",
   },
   {
     phase: "REVIEW / 04",
     name: "stage.in_review",
     description:
-      "A reviewer checks the diff and test evidence. Blocking findings return the ticket to the coding agent.",
+      "A reviewer checks the diff, test evidence, and a graph-derived blast-radius checklist. Blocking findings return the ticket to the coding agent.",
     component: "Reviewer + Devflow engine",
     child: "agent.<driver>.reviewer",
-    evidence: "Verdict, findings, reviewed SHA",
+    evidence: "Affected callers, verdict, findings, reviewed SHA",
     note: "A review round can repeat build, gates, and review within the ticket session.",
   },
   {
