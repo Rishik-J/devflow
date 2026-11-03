@@ -93,6 +93,9 @@ def is_fresh(root: Path) -> bool:
 
 @dataclass
 class GraphStatus:
+    # refreshed: True only if the graph was rebuilt and its fingerprint stored during this
+    # call, so `refreshed` implies `ok`. A fresh, failed or unavailable result is False.
+    # `state` carries the finer outcome (fresh | refreshed | failed | unavailable).
     refreshed: bool
     ok: bool
     nodes: int = 0
@@ -130,7 +133,7 @@ def ensure_fresh(
                                        fingerprint=current, state="unavailable"))
         if not result.ok:
             state = "failed" if result.ran and current else "unavailable"
-            return _report(GraphStatus(result.ran, False, message=result.message or "build failed",
+            return _report(GraphStatus(False, False, message=result.message or "build failed",
                                        fingerprint=current, state=state))
         built = True
         # Fingerprint again: the build itself must not have changed the tree it describes.
@@ -140,7 +143,7 @@ def ensure_fresh(
                                    "refreshed" if current else "unavailable"))
     except Exception:  # noqa: BLE001 - git timeout, unreadable files, failed write; never recorded
         # The freshness check itself broke: report it on this span instead of raising.
-        return _report(GraphStatus(built, False, message="graph freshness check error",
+        return _report(GraphStatus(False, False, message="graph freshness check error",
                                    fingerprint=current,
                                    state="failed" if built and current else "unavailable"))
 

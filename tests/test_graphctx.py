@@ -92,6 +92,76 @@ def test_failed_build_is_not_marked_fresh(repo: Path):
     assert graphctx.ensure_fresh(repo, builder=Builder()).refreshed
 
 
+def _status_for(path: str, repo: Path, monkeypatch):
+    if path == "success":
+        return graphctx.ensure_fresh(repo, builder=Builder())
+    if path == "fresh":
+        b = Builder()
+        graphctx.ensure_fresh(repo, builder=b)
+        return graphctx.ensure_fresh(repo, builder=b)
+    if path == "failed-build":
+        return graphctx.ensure_fresh(repo, builder=Builder(ok=False))
+    if path == "ran-false":
+        return graphctx.ensure_fresh(repo, builder=lambda r: GraphResult(False, False, message="x"))
+    if path == "raising":
+        def boom(r):
+            raise RuntimeError("nope")
+        return graphctx.ensure_fresh(repo, builder=boom)
+    real = Path.write_text
+
+    def deny(self, *a, **k):
+        if self.name == graphctx.FINGERPRINT_FILE:
+            raise PermissionError("denied")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "write_text", deny)
+    return graphctx.ensure_fresh(repo, builder=Builder())
+
+
+@pytest.mark.parametrize("path,refreshed,ok,state", [
+    ("success", True, True, "refreshed"),
+    ("fresh", False, True, "fresh"),
+    ("failed-build", False, False, "failed"),
+    ("ran-false", False, False, "unavailable"),
+    ("raising", False, False, "unavailable"),
+    ("post-build-exception", False, False, "failed"),
+])
+def test_refreshed_is_accurate_and_implies_ok(path, refreshed, ok, state, repo: Path, monkeypatch):
+    st = _status_for(path, repo, monkeypatch)
+    assert (st.refreshed, st.ok, st.state) == (refreshed, ok, state)
+    assert not st.refreshed or st.ok
+
+
+def test_failed_build_with_ran_result_keeps_message_and_fingerprint(repo: Path):
+    st = graphctx.ensure_fresh(repo, builder=lambda r: GraphResult(True, False, message="boom"))
+    assert not st.refreshed and not st.ok and st.state == "failed"
+    assert st.message == "boom" and st.fingerprint == graphctx.fingerprint(repo)
+
+
+def test_successful_rebuild_message(repo: Path):
+    st = graphctx.ensure_fresh(repo, builder=Builder())
+    assert st.refreshed and st.ok and st.message == "rebuilt"
+
+
+def test_graphstatus_documents_refreshed_meaning():
+    import inspect
+    src = inspect.getsource(graphctx.GraphStatus)
+    assert "rebuilt" in src and "fingerprint" in src and "state" in src
+
+
+@pytest.mark.parametrize("builder_kind,rc,text", [
+    ("ok", 0, "rebuilt"), ("fresh", 0, "up to date"), ("fail", 1, "FAILED"),
+])
+def test_cli_graph_refresh_output_and_exit(builder_kind, rc, text, repo: Path, monkeypatch, capsys):
+    from devflow.cli import main
+    real = graphctx.ensure_fresh
+    b = Builder(ok=builder_kind != "fail")
+    if builder_kind == "fresh":
+        real(repo, builder=b)
+    monkeypatch.setattr(graphctx, "ensure_fresh", lambda root, **k: real(root, builder=b, **k))
+    assert main(["graph", "refresh", str(repo)]) == rc
+    assert text in capsys.readouterr().out
+
+
 def test_force_rebuilds_even_when_fresh(repo: Path):
     b = Builder()
     graphctx.ensure_fresh(repo, builder=b)
