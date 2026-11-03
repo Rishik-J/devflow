@@ -51,7 +51,22 @@
                         "why": { "type": "string", "minLength": 1 } }
       }
     },
-    "risks": { "type": "array", "items": { "type": "string" } }
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "ui_use_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "kind", "description", "criterion_ids"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "kind": { "enum": ["happy_path", "state_persistence", "error_state", "responsive",
+                             "deep_link", "other"] },
+          "description": { "type": "string" },
+          "criterion_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
   },
   "allOf": [
     {

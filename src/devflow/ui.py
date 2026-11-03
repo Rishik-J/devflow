@@ -1701,6 +1701,12 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return
 
+        if self.path == "/favicon.ico":
+            # No icon to serve; answering 204 keeps browsers from logging a 404 on every load.
+            self.send_response(204)
+            self.end_headers()
+            return
+
         self.send_response(404)
         self.end_headers()
 
