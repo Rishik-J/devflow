@@ -84,6 +84,10 @@ class Span:
         self.status = "error"
 
 
+class WaitSignal(Exception):
+    """Marks a normal pause for a human or for time, not a failure."""
+
+
 @contextmanager
 def span(name: str, attributes: dict | None = None):
     parent = _current.get()
@@ -101,8 +105,8 @@ def span(name: str, attributes: dict | None = None):
     try:
         yield item
     except BaseException as exc:
-        # A human gate is a normal pause, not a failed model or tool call.
-        item.status = "waiting" if type(exc).__name__ == "_Wait" else "error"
+        # A WaitSignal is a normal pause, not a failed model or tool call.
+        item.status = "waiting" if isinstance(exc, WaitSignal) else "error"
         item.set(**{"error.type": type(exc).__name__})
         raise
     finally:

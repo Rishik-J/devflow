@@ -51,7 +51,7 @@ MAX_PLAN_CYCLES = 4
 FEEDBACK_OUTPUT_CHARS = 1500
 
 
-class _Wait(Exception):
+class _Wait(telemetry.WaitSignal):
     """Stop here; nothing more can happen until a person acts or time passes."""
 
 

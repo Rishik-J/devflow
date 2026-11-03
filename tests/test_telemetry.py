@@ -43,6 +43,54 @@ def test_errors_record_the_type_and_never_the_exception_message(capture):
     assert record["status"] == "error" and record["attributes"]["error.type"] == "ValueError"
 
 
+def test_wait_signal_is_a_documented_exception():
+    assert issubclass(telemetry.WaitSignal, Exception)
+    assert telemetry.WaitSignal.__doc__
+
+
+def test_renamed_wait_signal_records_waiting_and_no_message(capture):
+    class _Pause(telemetry.WaitSignal):
+        pass
+
+    with pytest.raises(_Pause), telemetry.span("pause"):
+        raise _Pause("SENSITIVE_VALUE_DO_NOT_EXPORT")
+    assert "SENSITIVE_VALUE" not in capture.read_text()
+    record = rows(capture)[0]
+    assert record["status"] == "waiting" and record["attributes"]["error.type"] == "_Pause"
+
+
+def test_detection_ignores_class_names(capture):
+    class _Wait(Exception):
+        pass
+
+    with pytest.raises(_Wait), telemetry.span("lookalike"):
+        raise _Wait()
+    with pytest.raises(RuntimeError), telemetry.span("boom"):
+        raise RuntimeError("x")
+    with pytest.raises(telemetry.WaitSignal), telemetry.span("base"):
+        raise telemetry.WaitSignal()
+    status = {r["name"]: r["status"] for r in rows(capture)}
+    assert status == {"lookalike": "error", "boom": "error", "base": "waiting"}
+
+
+def test_telemetry_source_has_no_name_comparison():
+    from pathlib import Path
+    text = Path(telemetry.__file__).read_text()
+    assert '"_Wait"' not in text
+    assert "isinstance(exc, WaitSignal)" in text
+
+
+def test_engine_wait_is_a_wait_signal_and_telemetry_does_not_import_engine():
+    import subprocess
+    import sys
+
+    from devflow import engine
+    assert issubclass(engine._Wait, telemetry.WaitSignal)
+    assert engine._Wait.__name__ == "_Wait"
+    code = "import sys, devflow.telemetry; sys.exit('devflow.engine' in sys.modules)"
+    assert subprocess.run([sys.executable, "-I", "-c", code], check=False).returncode == 0
+
+
 def test_agent_trace_counts_usage_without_capturing_content(capture, tmp_path):
     result = AgentResult(text="PRIVATE RESPONSE", cost_usd=.5,
                          raw={"usage": {"input_tokens": 10, "output_tokens": 3}})
