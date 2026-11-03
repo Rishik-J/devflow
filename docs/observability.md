@@ -98,6 +98,7 @@ disable tracing for that repository.
 | `tool.git`, `tool.github`, `tool.github_project` | Git and host operation latency and exception type |
 | `worktree.*` | Checkout preparation overhead |
 | `graph.refresh` | Graph freshness check: `devflow.graph.refreshed` (true only when a rebuild succeeded), `.status`, `.nodes`, `.edges`, `.fingerprint` |
+| `graph.stale` | Event emitted when the planner request starts and the graph is stale or unbuilt (before the engine refreshes it): `devflow.graph.status` (`stale`/`unbuilt`), `devflow.graph.fingerprint`, `devflow.graph.stored_fingerprint` (12-char prefixes, stored one empty when absent), `devflow.graph.age_seconds` (omitted when unbuilt). Also prints one `devflow: graph warning: ...` stderr line |
 | `stall.detected` | Event emitted when a finished stage ran longer than the p99 of its own history: `devflow.stage`, `devflow.duration_seconds`, `devflow.threshold_p99_seconds`, `devflow.baseline_samples` |
 | `stage.result` | Artifact success and review/blocking finding counts |
 | `workflow.summary` | Overall recorded duration, human waiting time and review rounds when a retro runs |
@@ -120,6 +121,13 @@ metadata-only and content-capture modes:
 - `graph_status`, `graph_fingerprint`, `graph_nodes`, `graph_edges`: the latest graph check for
   an agent request. The fingerprint is a 12-character hex prefix (empty outside a git repo);
   counts are integers and only present when known.
+
+- `graph_staleness`: `fresh`, `stale` or `unbuilt`, checked once at the start of the planner
+  request before the graph is refreshed. **fresh**: graph.json exists and its stored fingerprint
+  matches the working tree. **stale**: graph.json exists but the stored fingerprint is missing or
+  differs (HEAD moved or the tree changed). **unbuilt**: graph.json is missing. The engine still
+  auto-refreshes the graph afterwards, so this means "stale when planning began"; the post-refresh
+  outcome is in `graph_status`.
 
 Graph states: **fresh** (no-op check, existing graph is current), **refreshed** (a rebuild
 succeeded), **failed** (the builder ran but failed; counts are 0, never shown as fresh) and

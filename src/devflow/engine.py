@@ -281,6 +281,8 @@ class Engine:
         cwd: Path | None = None, files: list[str] | None = None, session: str | None = None,
     ) -> AgentRequest:
         wt = cwd or self._wt(ticket)
+        if role == "planner":
+            self._check_graph_staleness(wt)  # before the rebuild, so staleness is reported
         self._refresh_graph(wt)  # best effort; digest says if absent
         system = prompts.role_prompt(self.cfg.root, role) + "\n\n" + graphctx.agent_preamble(wt, files)
         system += self._context_for(ticket, role, files or [])
@@ -296,6 +298,17 @@ class Engine:
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,
             mcp=graphctx.mcp_config(wt), mcp_overrides=graphctx.codex_overrides(wt),
         )
+
+    def _check_graph_staleness(self, wt: Path) -> None:
+        """Warn (never block) when the graph is stale or unbuilt as planning begins."""
+        with suppress(Exception):  # best effort; never stop a ticket
+            state = graphctx.graph_freshness(wt)
+            telemetry.trace_metadata(graph_staleness=state)
+            if state in ("stale", "unbuilt"):
+                telemetry.report_graph_staleness({
+                    "status": state, "fingerprint": graphctx.fingerprint(wt),
+                    "stored": graphctx._stored(wt),
+                    "age_seconds": graphctx.graph_age_seconds(wt)})
 
     def _refresh_graph(self, wt: Path) -> None:
         """Freshness check that can never stop a ticket; records graph provenance on the trace."""

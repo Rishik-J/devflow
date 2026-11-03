@@ -14,6 +14,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -62,6 +63,25 @@ def _stored(root: Path) -> str:
         return (root / GRAPH_DIR / FINGERPRINT_FILE).read_text().strip()
     except OSError:
         return ""
+
+
+def graph_freshness(root: Path) -> str:
+    """Read-only check: 'fresh', 'stale' or 'unbuilt'. Never raises, writes nothing."""
+    try:
+        if not graph_path(root).exists():
+            return "unbuilt"
+        current = fingerprint(root)
+        return "fresh" if current and current == _stored(root) else "stale"
+    except Exception:  # noqa: BLE001 - a check must never break a ticket
+        return "stale"
+
+
+def graph_age_seconds(root: Path) -> int | None:
+    """Age of graph.json from its mtime, for diagnostics only (None if missing)."""
+    try:
+        return max(0, int(time.time() - graph_path(root).stat().st_mtime))
+    except OSError:
+        return None
 
 
 def is_fresh(root: Path) -> bool:
