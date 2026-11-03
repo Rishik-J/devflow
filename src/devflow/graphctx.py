@@ -349,6 +349,17 @@ class ImpactReport:
     test_coverage: dict[str, list[str]] = field(default_factory=dict)
     uncovered: list[str] = field(default_factory=list)
 
+    @property
+    def node_count(self) -> int:
+        """Symbols + callers + dependent modules."""
+        return (len(self.symbols) + sum(len(cs) for cs in self.callers.values())
+                + len(self.dependent_modules))
+
+    @property
+    def edge_count(self) -> int:
+        """One edge per caller entry."""
+        return sum(len(cs) for cs in self.callers.values())
+
     def to_dict(self) -> dict:
         return {
             "files": list(self.files),
@@ -757,3 +768,63 @@ def ticket_slice(root: Path, text: str, *, hops: int = 2,
         return SliceResult(seeds=labels, nodes=len(seen_nodes), text=body)
     except Exception:  # noqa: BLE001 - a slice is best effort and must never stop a ticket
         return None
+
+
+# --------------------------------------------------------------------------------------------
+# Reviewer blast-radius checklist: graph-derived, bounded, and sanitised.
+# --------------------------------------------------------------------------------------------
+
+CHECKLIST_BUDGET_CHARS = 4000
+
+
+@dataclass(frozen=True)
+class ChecklistResult:
+    text: str
+    callers_total: int
+    callers_verified: int
+    callers_unverified: int
+
+
+def impacted_tests(report: ImpactReport, diff_files) -> list[str]:
+    """Sorted union of covering test files and modified test files in the diff."""
+    out = {f for tests in report.test_coverage.values() for f in tests}
+    out.update(f for f in diff_files if _is_test_file(f))
+    return sorted(out)
+
+
+def reviewer_checklist(report: ImpactReport, diff_files,
+                       *, budget_chars: int = CHECKLIST_BUDGET_CHARS) -> ChecklistResult:
+    """Render a deterministic contract-verification checklist from an impact report."""
+    diff = set(diff_files)
+    all_callers = sorted((c for cs in report.callers.values() for c in cs),
+                         key=lambda c: (c.hop, c.file, c.symbol, c.id))
+    verified = sum(1 for c in all_callers if c.file in diff or _is_test_file(c.file))
+    total = len(all_callers)
+    lines: list[str] = []
+    for c in sorted(report.external_contracts, key=lambda c: (str(c.get("file")), str(c.get("label")))):
+        consumers = ", ".join(_clean(x, 60) for x in sorted(map(str, c.get("consumers", []))))
+        lines.append(f"- [ ] Contract `{_clean(c.get('label'))}` in {_clean(c.get('file'), 120)} "
+                     f"is unchanged for its consumers: {consumers or 'unknown'}")
+    for c in sorted(report.callers.get(1, []), key=lambda c: (c.file, c.symbol, c.id)):
+        if c.file in diff:
+            continue
+        lines.append(f"- [ ] Caller `{_clean(c.symbol)}` in {_clean(c.file, 120)} "
+                     f"({_clean(c.relation, 30)}) still works with the change")
+    for m in sorted(report.dependent_modules, key=lambda m: (str(m.get("file")), m.get("hop", 0))):
+        if m.get("file") in diff:
+            continue
+        lines.append(f"- [ ] Dependent module {_clean(m.get('file'), 120)} "
+                     f"(hop {_clean(m.get('hop'), 5)}) is not broken")
+    labels = {s.id: s.label for s in report.symbols}
+    for sid in sorted(report.uncovered):
+        lines.append(f"- [ ] Symbol `{_clean(labels.get(sid, sid))}` has no covering test; "
+                     "check it by reading the diff")
+    if report.unknown_files:
+        lines.append("- Not in the graph (may be incomplete): "
+                     + ", ".join(_clean(f, 120) for f in sorted(report.unknown_files)))
+    if not lines:
+        lines = ["No blast radius found in the graph for this diff."]
+    text = "\n".join(lines)
+    if len(text) > budget_chars:
+        text = text[: max(0, budget_chars - len(_TRUNC) - 1)].rstrip() + "\n" + _TRUNC
+    return ChecklistResult(text, total, verified, total - verified)

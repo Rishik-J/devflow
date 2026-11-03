@@ -397,7 +397,7 @@ def test_trace_metadata_validates_on_root(capture):
     assert attrs["langfuse.trace.metadata.base_sha"] == "deadbeef"
     assert attrs["devflow.graph_fingerprint"] == "f" * 12
     allowed = {"base_sha", "remote", "graph_status", "graph_fingerprint", "graph_nodes", "graph_edges",
-               "graph_staleness", "repo", "issue"}
+               "graph_staleness", "repo", "issue", *BLAST_KEYS}
     assert {k.rsplit(".", 1)[1] for k in attrs if k.startswith("langfuse.trace.metadata.")} <= allowed
     assert "leak" not in capture.read_text()
 
@@ -1203,3 +1203,52 @@ def test_slice_only_for_planner_role(capture, tmp_path):
         run(engine, 1)
     finally:
         env.store.close()
+
+
+BLAST_KEYS = {"blast_status", "blast_nodes", "blast_edges", "blast_callers_total",
+              "blast_callers_verified", "impacted_tests"}
+
+
+def _blast_run(*calls):
+    class Cfg:
+        name = "t"
+
+    class Eng:
+        cfg = Cfg()
+
+        @telemetry.ticket_run
+        def run(self, issue):
+            for kw in calls:
+                telemetry.trace_metadata(**kw)
+            from types import SimpleNamespace
+            return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    Eng().run(1)
+
+
+def test_blast_trace_keys_validated(capture):
+    _blast_run({
+        "blast_status": "injected", "blast_nodes": 5, "blast_edges": 2, "blast_callers_total": 2,
+        "blast_callers_verified": 1, "impacted_tests": ["tests/a.py", "tests/b.py"],
+        "slice_status": "injected", "slice_nodes": 3, "prompt": "leak"})
+    attrs = root_of(capture)
+    assert attrs["devflow.blast_status"] == "injected"
+    assert (attrs["devflow.blast_nodes"], attrs["devflow.blast_edges"]) == (5, 2)
+    assert attrs["devflow.blast_callers_verified"] == 1
+    assert attrs["devflow.impacted_tests"] == "tests/a.py,tests/b.py"
+    assert attrs["devflow.slice_status"] == "injected" and attrs["devflow.slice_nodes"] == 3
+    assert "devflow.prompt" not in attrs and "leak" not in capture.read_text()
+
+
+def test_blast_trace_hostile_values_dropped(capture):
+    _blast_run({
+        "blast_status": "bogus", "blast_nodes": -1, "blast_edges": True, "blast_callers_total": "3",
+        "blast_callers_verified": 1.5, "impacted_tests": "tests/a.py"},
+        {"impacted_tests": ["ok.py", 3]})
+    attrs = root_of(capture)
+    assert not {f"devflow.{k}" for k in BLAST_KEYS} & set(attrs)
+
+
+def test_readme_documents_blast_radius():
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    for needle in ("BLAST RADIUS", "blast_status", "impacted_tests"):
+        assert needle in readme

@@ -1131,3 +1131,153 @@ def test_slice_failures_never_stop_the_ticket(env: Env, monkeypatch, mode):
     out = engine.run(1)
     assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
     assert SLICE_HEADER not in env.planner.calls[0].system
+
+
+# ---------------------------------------------------------------- reviewer blast radius
+
+def _blast_builder(root):
+    from tests.test_graphctx import node, write_graph
+    nodes = [node("calc", "calc.py", "src/calc.py"), node("add", "add()", "src/calc.py"),
+             node("sub", "sub()", "src/calc.py"),
+             node("run", "run_report()", "src/app.py"),
+             node("t", "test_add()", "tests/test_calc.py")]
+    links = [{"source": "calc", "target": "add", "relation": "contains"},
+             {"source": "calc", "target": "sub", "relation": "contains"},
+             {"source": "run", "target": "add", "relation": "calls"},
+             {"source": "t", "target": "add", "relation": "calls"}]
+    write_graph(root, nodes, links)
+    return GraphResult(True, True, nodes=len(nodes), edges=len(links))
+
+
+def _calc_only_coder(req):
+    (req.cwd / "src" / "calc.py").write_text(CALC_MULT)
+    return "edited calc"
+
+
+def _run_blast(env: Env, builder=_blast_builder, **kw):
+    kw.setdefault("coder", _calc_only_coder)
+    for _ in range(2):
+        engine = env.engine(**kw)
+        engine.graph_builder = builder
+        out = engine.run(1)
+        if _ == 0:
+            env.say("alice", "/approve")
+    return out
+
+
+def _reviewer_prompts(env: Env):
+    return [c.prompt for c in env.review_agent.calls if c.role == "reviewer"]
+
+
+def test_reviewer_prompt_gets_blast_radius_checklist(env: Env):
+    out = _run_blast(env)
+    assert out.ticket.state is State.AWAITING_MERGE_APPROVAL, out
+    (prompt,) = _reviewer_prompts(env)
+    assert "<<<BLAST RADIUS" in prompt
+    assert "Contract `add()`" in prompt and "run_report()" in prompt
+    assert "Symbol `sub()` has no covering test" in prompt
+    others = [c.prompt for c in env.coder_agent.calls] + [c.prompt for c in env.planner.calls]
+    assert others and all("BLAST RADIUS" not in p for p in others)
+    assert all("BLAST RADIUS" not in c.system for c in env.coder_agent.calls + env.planner.calls)
+
+
+@pytest.mark.parametrize("mode", ["missing", "raises"])
+def test_graph_failure_at_review_degrades(env: Env, monkeypatch, mode):
+    from devflow import graphctx
+    if mode == "raises":
+        monkeypatch.setattr(graphctx, "impact",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+        builder = _blast_builder
+    else:
+        def builder(root):
+            raise RuntimeError("no graph")
+    out = _run_blast(env, builder)
+    assert out.ticket.state is State.AWAITING_MERGE_APPROVAL, out
+    (prompt,) = _reviewer_prompts(env)
+    assert "BLAST RADIUS" not in prompt
+
+
+def test_blast_trace_metadata(env: Env, tmp_path: Path):
+    from devflow import telemetry
+    log = tmp_path / "trace.jsonl"
+    telemetry.configure(settings={"enabled": True, "log_file": str(log)})
+    try:
+        _run_blast(env)
+    finally:
+        telemetry.configure(settings={})
+    rows_ = [json.loads(x) for x in log.read_text().splitlines()]
+    attrs = [r["attributes"] for r in rows_ if r["name"] == "ticket.run"][-1]
+    assert attrs["devflow.blast_status"] == "injected"
+    # symbols: calc.py's add + sub (+ module); callers: run_report, test_add
+    assert attrs["devflow.blast_edges"] == 2
+    assert attrs["devflow.blast_callers_total"] == 2 and attrs["devflow.blast_callers_verified"] == 1
+    assert attrs["devflow.blast_nodes"] >= 2 + 2
+    assert attrs["devflow.impacted_tests"] == "tests/test_calc.py"
+
+
+def _spy_commands(monkeypatch):
+    from devflow import gates
+    seen: list[str] = []
+    real = gates.run_command
+
+    def spy(command, cwd, *a, **k):
+        seen.append(command)
+        return real(command, cwd, *a, **k)
+    monkeypatch.setattr(gates, "run_command", spy)
+    return seen
+
+
+def _pytest_env(tmp_path: Path) -> Env:
+    return Env(tmp_path, gates={"unit": [f'"{PY}" -m pytest -q']})
+
+
+def test_verify_runs_impacted_tests_first(tmp_path: Path, monkeypatch):
+    env = _pytest_env(tmp_path)
+    try:
+        seen = _spy_commands(monkeypatch)
+        _run_blast(env)
+        full = f'"{PY}" -m pytest -q'
+        prio = full + " tests/test_calc.py"
+        assert prio in seen
+        i = seen.index(prio)
+        assert seen[i + 1] == full
+    finally:
+        env.store.close()
+
+
+def test_verify_without_graph_runs_only_original(tmp_path: Path, monkeypatch):
+    env = _pytest_env(tmp_path)
+    try:
+        seen = _spy_commands(monkeypatch)
+        _run_blast(env, builder=lambda r: GraphResult(False, False, message="skip"))
+        assert seen and all("tests/test_calc.py" not in c for c in seen)
+    finally:
+        env.store.close()
+
+
+def test_priority_check_only_short_circuits_on_new_failures(tmp_path: Path, monkeypatch):
+    from devflow import baseline
+    from devflow import engine as engine_mod
+    from devflow.gates import GateReport, GateResult
+    env = _pytest_env(tmp_path)
+    try:
+        captured = {}
+        real = engine_mod.run_gates
+
+        def spy(cfg, wt, **kw):
+            captured.update(kw)
+            return real(cfg, wt, **kw)
+        monkeypatch.setattr(engine_mod, "run_gates", spy)
+        cmd = f'"{PY}" -m pytest -q'
+
+        def res(out):
+            return GateResult(".", "unit", cmd, False, 1, 0.1, output_tail=out)
+        old = res("FAILED tests/test_calc.py::T::test_add - boom")
+        monkeypatch.setattr(baseline, "ensure_baseline", lambda *a, **k: GateReport([old]))
+        _run_blast(env)
+        check = captured["priority_check"]
+        assert captured["impacted_tests"] == ["tests/test_calc.py"]
+        assert check(old) is False
+        assert check(res("FAILED tests/test_calc.py::T::test_new - boom")) is True
+    finally:
+        env.store.close()

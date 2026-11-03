@@ -10,10 +10,12 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
+import shlex
 import signal
 import subprocess
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -105,6 +107,7 @@ class GateResult:
 class GateReport:
     results: list[GateResult] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    priority: list[GateResult] = field(default_factory=list)  # diagnostics only
 
     @property
     def ok(self) -> bool:
@@ -148,9 +151,48 @@ def run_command(
             return None, out or "", True
 
 
+def _is_bare_pytest(command: str) -> bool:
+    """True for `pytest ...` / `python -m pytest ...` with options only, no path arguments."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if any(w in ("&&", "||", ";", "|", "&") or any(c in w for c in ";|&<>$`()") for w in words):
+        return False
+    if (len(words) >= 3 and re.fullmatch(r"python[\d.]*", Path(words[0]).name)
+            and words[1:3] == ["-m", "pytest"]):
+        rest = words[3:]
+    elif words[:1] == ["pytest"]:
+        rest = words[1:]
+    else:
+        return False
+    skip_value = False
+    for w in rest:
+        if skip_value:
+            skip_value = False
+            continue
+        if w.startswith("-"):
+            if w in ("-k", "-m", "-c", "-p", "-o", "--maxfail", "--tb", "-n", "--ignore",
+                     "--deselect", "--rootdir", "--junitxml"):
+                skip_value = True
+            continue
+        return False  # a path or node id
+    return True
+
+
+def _priority_command(command: str, cwd: Path, impacted: list[str]) -> str | None:
+    if not impacted or not _is_bare_pytest(command):
+        return None
+    existing = [p for p in impacted if (cwd / p).is_file()]
+    if not existing:
+        return None
+    return command + " " + " ".join(shlex.quote(p) for p in existing)
+
+
 def run_gates(
     cfg: Config, worktree: Path, *, gates: Iterable[str] = GATES, fail_fast: bool = False,
-    timeout_s: float | None = None,
+    timeout_s: float | None = None, impacted_tests: list[str] | None = None,
+    priority_check: Callable[[GateResult], bool] | None = None,
 ) -> GateReport:
     report = GateReport()
     timeout = timeout_s if timeout_s is not None else cfg.gate_timeout_minutes * 60
@@ -163,6 +205,36 @@ def run_gates(
             cwd = worktree / project.path
             for command in cmds:
                 start = time.monotonic()
+                prio_cmd = _priority_command(command, cwd, impacted_tests or [])
+                if prio_cmd is not None:
+                    code, out, timed_out = run_command(prio_cmd, cwd, timeout, project_env(cwd))
+                    prio = GateResult(
+                        project=project.path, gate=gate, command=command,
+                        ok=code == 0 and not timed_out, exit_code=code,
+                        duration_s=round(time.monotonic() - start, 2), timed_out=timed_out,
+                        output_tail=out[-TAIL_CHARS:],
+                    )
+                    report.priority.append(prio)
+                    # pytest exit 5 means nothing was collected (deselected or empty): inconclusive.
+                    short = bool(not prio.ok and prio.exit_code != 5
+                                 and priority_check is not None and priority_check(prio))
+                    telemetry.event("gate.order", **{
+                        "devflow.gate": gate, "devflow.project": project.path,
+                        "devflow.impacted_tests": len(impacted_tests or []),
+                        "devflow.priority_ran": True, "devflow.priority_ok": prio.ok,
+                        "devflow.short_circuited": short})
+                    if short:
+                        report.results.append(prio)
+                        if fail_fast:
+                            return report
+                        continue
+                    start = time.monotonic()
+                else:
+                    telemetry.event("gate.order", **{
+                        "devflow.gate": gate, "devflow.project": project.path,
+                        "devflow.impacted_tests": len(impacted_tests or []),
+                        "devflow.priority_ran": False, "devflow.priority_ok": False,
+                        "devflow.short_circuited": False})
                 code, out, timed_out = run_command(command, cwd, timeout, project_env(cwd))
                 result = GateResult(
                     project=project.path, gate=gate, command=command,

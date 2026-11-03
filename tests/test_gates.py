@@ -145,3 +145,110 @@ def test_changed_setup_commands_rerun(base_repo: Path):
     assert setup_worktree(cfg_with_setup(base_repo, ["echo a >> r.log"]), base_repo).ok
     assert setup_worktree(cfg_with_setup(base_repo, ["echo b >> r.log"]), base_repo).ok
     assert (base_repo / "r.log").read_text() == "a\nb\n"
+
+
+# ---------------------------------------------------------------- impacted-first priority pass
+
+
+def _pytest_cfg(tmp_path: Path, exit_code: int = 0):
+    (tmp_path / "pytest").mkdir(exist_ok=True)
+    (tmp_path / "pytest" / "__init__.py").write_text("")
+    # A real `python -m pytest` resolves to this stub because cwd is first on sys.path.
+    (tmp_path / "pytest" / "__main__.py").write_text(
+        "import sys\nwith open('log.txt','a') as f:\n    f.write(' '.join(sys.argv[1:])+'\\n')\n"
+        f"raise SystemExit({exit_code} if len(sys.argv) > 1 and sys.argv[-1].endswith('t_a.py') else 0)\n")
+    (tmp_path / "t_a.py").write_text("")
+    return make_cfg(tmp_path, {"unit": [f"{PY} -m pytest -q"]})
+
+
+def _log(tmp_path: Path) -> list[str]:
+    return (tmp_path / "log.txt").read_text().splitlines()
+
+
+def test_priority_pass_runs_impacted_first_and_full_still_runs(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path)
+    report = run_gates(cfg, tmp_path, impacted_tests=["t_a.py"])
+    assert _log(tmp_path) == ["-q t_a.py", "-q"]
+    assert len(report.results) == 1 and report.results[0].command.endswith("-q")
+    assert len(report.priority) == 1 and report.priority[0].ok
+
+
+def test_priority_short_circuit_records_original_command(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path, exit_code=1)
+    report = run_gates(cfg, tmp_path, impacted_tests=["t_a.py"], priority_check=lambda r: True)
+    assert _log(tmp_path) == ["-q t_a.py"]
+    assert [r.command for r in report.results] == [cfg.projects[0].gates["unit"][0]]
+    assert not report.ok and report.priority[0] is report.results[0]
+
+
+def test_priority_check_false_or_none_never_short_circuits(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path, exit_code=1)
+    run_gates(cfg, tmp_path, impacted_tests=["t_a.py"], priority_check=lambda r: False)
+    assert _log(tmp_path) == ["-q t_a.py", "-q"]
+    (tmp_path / "log.txt").unlink()
+    run_gates(cfg, tmp_path, impacted_tests=["t_a.py"])
+    assert _log(tmp_path) == ["-q t_a.py", "-q"]
+
+
+@pytest.mark.parametrize("command", ["echo hi", "npm test", None])
+def test_non_pytest_commands_are_unchanged(tmp_path: Path, command):
+    if command is None:
+        command = f"{PY} -m pytest tests/x.py"  # explicit path argument
+    (tmp_path / "t_a.py").write_text("")
+    report = run_gates(make_cfg(tmp_path, {"unit": [command]}), tmp_path, impacted_tests=["t_a.py"])
+    assert report.priority == [] and len(report.results) == 1
+    assert report.results[0].command == command
+
+
+def test_no_impacted_tests_behaves_as_before(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path)
+    for impacted in (None, []):
+        report = run_gates(cfg, tmp_path, impacted_tests=impacted)
+        assert report.priority == []
+    assert _log(tmp_path) == ["-q", "-q"]
+
+
+def test_missing_paths_are_dropped(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path)
+    report = run_gates(cfg, tmp_path, impacted_tests=["nope.py"])
+    assert report.priority == [] and _log(tmp_path) == ["-q"]
+    run_gates(cfg, tmp_path, impacted_tests=["nope.py", "t_a.py"])
+    assert _log(tmp_path)[1] == "-q t_a.py"
+
+
+def test_hostile_impacted_path_is_quoted(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path)
+    (tmp_path / "t b;touch pwned.py").write_text("")
+    run_gates(cfg, tmp_path, impacted_tests=["t b;touch pwned.py"])
+    assert not (tmp_path / "pwned.py").exists() and not (tmp_path / "pwned").exists()
+    assert _log(tmp_path)[0] == "-q t b;touch pwned.py"
+
+
+def test_gate_order_event_has_no_contents(tmp_path: Path):
+    from devflow import telemetry
+    log = tmp_path / "trace.jsonl"
+    telemetry.configure(settings={"enabled": True, "log_file": str(log)})
+    try:
+        cfg = _pytest_cfg(tmp_path)
+        with telemetry.span("root"):
+            run_gates(cfg, tmp_path, impacted_tests=["t_a.py"])
+            run_gates(make_cfg(tmp_path, {"unit": ["echo x"]}), tmp_path, impacted_tests=["t_a.py"])
+    finally:
+        telemetry.configure(settings={})
+    import json
+    evs = [json.loads(line)["attributes"] for line in log.read_text().splitlines()
+           if json.loads(line)["name"] == "gate.order"]
+    assert evs[0]["devflow.priority_ran"] is True and evs[0]["devflow.priority_ok"] is True
+    assert evs[0]["devflow.short_circuited"] is False and evs[0]["devflow.impacted_tests"] == 1
+    assert evs[1]["devflow.priority_ran"] is False
+    assert "output" not in json.dumps(evs)
+
+
+def test_priority_exit_5_is_inconclusive_and_full_suite_runs(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path, exit_code=5)
+    calls = []
+    report = run_gates(cfg, tmp_path, impacted_tests=["t_a.py"],
+                       priority_check=lambda r: calls.append(r) or True)
+    assert calls == [] and _log(tmp_path) == ["-q t_a.py", "-q"]
+    assert report.priority[0].ok is False and report.priority[0].exit_code == 5
+    assert len(report.results) == 1 and report.results[0].ok
