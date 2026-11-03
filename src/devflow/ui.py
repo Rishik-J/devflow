@@ -9,9 +9,11 @@ import socketserver
 import sys
 import threading
 import webbrowser
+from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 from typing import Any
 
+from .analytics import collect_analytics
 from .detect import repo_root
 from .loadconfig import ConfigError, load_config
 from .store import Store, state_db_path
@@ -205,6 +207,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .refresh-btn:hover {
       background: #30363d;
     }
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+    .tab {
+      background: transparent; color: #8b949e; border: 1px solid var(--border);
+      padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer;
+    }
+    .tab.active { background: #21262d; color: var(--heading); border-color: #8b949e; }
+    .panel-title { font-size: 14px; font-weight: 600; color: var(--heading); margin: 24px 0 10px; }
+    .a-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card-bg);
+      border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .a-table th, .a-table td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--border); }
+    .a-table th:first-child, .a-table td:first-child { text-align: left; }
+    .a-table th { color: #8b949e; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .a-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .a-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+    .bar-row { display: flex; align-items: center; gap: 10px; font-size: 12px; margin: 6px 0; }
+    .bar-label { width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; background: #21262d; border-radius: 4px; height: 10px; overflow: hidden; display: flex; }
+    .bar-fill { height: 100%; background: var(--accent); }
+    .bar-fill.human { background: var(--yellow); }
+    .bar-val { width: 90px; text-align: right; color: #8b949e; }
+    .muted { color: #8b949e; font-size: 12px; }
+    #analytics-view { display: none; }
     .live-dot {
       width: 8px;
       height: 8px;
@@ -235,6 +259,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </header>
 
+  <div class="tabs">
+    <button class="tab active" id="tab-board" onclick="showView('board')">Board</button>
+    <button class="tab" id="tab-analytics" onclick="showView('analytics')">Analytics</button>
+  </div>
+
+  <div id="board-view">
   <div class="stats-bar">
     <div class="stat-card">
       <div class="stat-label">Working Now</div>
@@ -257,8 +287,112 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="board" id="board-container">
     <!-- Rendered via JavaScript -->
   </div>
+  </div>
+
+  <div id="analytics-view">
+    <div class="stats-bar" id="a-tiles"></div>
+    <div class="panel-title">Tickets</div>
+    <table class="a-table" id="a-tickets"></table>
+    <div class="a-grid">
+      <div><div class="panel-title">Agent latency (mean seconds)</div><div class="a-card" id="a-agents"></div></div>
+      <div><div class="panel-title">Agent time vs human wait per ticket</div><div class="a-card" id="a-split"></div></div>
+      <div><div class="panel-title">Gates</div><div class="a-card" id="a-gates"></div></div>
+      <div><div class="panel-title">Review and routing</div><div class="a-card" id="a-review"></div></div>
+      <div><div class="panel-title">Error spans</div><div class="a-card" id="a-errors"></div></div>
+    </div>
+    <p class="muted" id="a-foot" style="margin-top:16px"></p>
+  </div>
 
   <script>
+    let view = 'board';
+    function showView(name) {
+      view = name;
+      document.getElementById('board-view').style.display = name === 'board' ? '' : 'none';
+      document.getElementById('analytics-view').style.display = name === 'analytics' ? 'block' : 'none';
+      document.getElementById('tab-board').classList.toggle('active', name === 'board');
+      document.getElementById('tab-analytics').classList.toggle('active', name === 'analytics');
+      if (name === 'analytics') fetchAnalytics();
+    }
+
+    async function fetchAnalytics() {
+      try {
+        const res = await fetch('/api/analytics');
+        if (!res.ok) throw new Error('API error: ' + res.status);
+        renderAnalytics(await res.json());
+      } catch (err) {
+        console.error('Failed to fetch analytics:', err);
+      }
+    }
+
+    function fmtDur(s) {
+      if (!s) return '0s';
+      if (s < 90) return Math.round(s) + 's';
+      if (s < 5400) return (s / 60).toFixed(1) + 'm';
+      return (s / 3600).toFixed(1) + 'h';
+    }
+    function fmtNum(n) { return Number(n || 0).toLocaleString(); }
+
+    function bars(rows, max) {
+      if (!rows.length) return '<div class="muted">No data</div>';
+      return rows.map(r => `<div class="bar-row"><span class="bar-label" title="${escapeHtml(r.label)}">${escapeHtml(r.label)}</span>` +
+        `<span class="bar-track">${(r.parts || [{v: r.v}]).map(p => `<span class="bar-fill ${p.cls || ''}" style="width:${max ? (100 * p.v / max) : 0}%"></span>`).join('')}</span>` +
+        `<span class="bar-val">${escapeHtml(r.text)}</span></div>`).join('');
+    }
+
+    function renderAnalytics(a) {
+      const t = a.totals;
+      const tiles = [
+        ['Tickets', `${t.completed} / ${t.tickets} done`],
+        ['Total cost', '$' + t.cost_usd.toFixed(2)],
+        ['Median ticket', fmtDur(t.median_ticket_seconds)],
+        ['Agent calls', fmtNum(t.agent_calls)],
+        ['Gate failures', `${t.gate_failures} / ${t.gates}`],
+        ['Error spans', fmtNum(t.error_spans)],
+      ];
+      document.getElementById('a-tiles').innerHTML = tiles.map(([l, v]) =>
+        `<div class="stat-card"><div class="stat-label">${l}</div><div class="stat-val">${escapeHtml(String(v))}</div></div>`).join('');
+
+      const head = ['Ticket', 'Runs', 'Wall', 'Agent', 'Human wait', 'Calls', 'Reviews', 'Gate fails', 'Errors', 'Cost', 'Tokens in/out'];
+      const rows = a.tickets.map(k => [
+        `${k.repo ? escapeHtml(k.repo) + ' ' : ''}#${k.issue}${k.done ? ' ✓' : ''}`, k.runs, fmtDur(k.total_seconds),
+        fmtDur(k.agent_seconds), fmtDur(k.human_wait_seconds), k.agent_calls, k.review_rounds,
+        k.gate_failures, k.error_spans, '$' + k.cost_usd.toFixed(2), `${fmtNum(k.tokens_in)} / ${fmtNum(k.tokens_out)}`]);
+      document.getElementById('a-tickets').innerHTML = '<tr>' + head.map(h => `<th>${h}</th>`).join('') + '</tr>' +
+        (rows.length ? rows.map(r => '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') :
+          `<tr><td colspan="${head.length}" class="muted">No traces found. Enable telemetry to collect them.</td></tr>`);
+
+      const agents = Object.entries(a.agent_latency_seconds);
+      const maxAgent = Math.max(0, ...agents.map(([, d]) => d.mean));
+      document.getElementById('a-agents').innerHTML = bars(agents.map(([k, d]) =>
+        ({label: k, v: d.mean, text: `${d.mean.toFixed(0)}s · n=${d.count}`})), maxAgent);
+
+      const maxTotal = Math.max(0, ...a.tickets.map(k => k.agent_seconds + k.human_wait_seconds));
+      document.getElementById('a-split').innerHTML = bars(a.tickets.map(k => ({
+        label: '#' + k.issue, parts: [{v: k.agent_seconds}, {v: k.human_wait_seconds, cls: 'human'}],
+        text: `${fmtDur(k.agent_seconds)} / ${fmtDur(k.human_wait_seconds)}`})), maxTotal) +
+        '<div class="muted">blue: agent time · yellow: human wait</div>';
+
+      const gates = Object.entries(a.gates);
+      document.getElementById('a-gates').innerHTML = gates.length ? gates.map(([k, g]) =>
+        `<div class="bar-row"><span class="bar-label">${escapeHtml(k)}</span><span>${g.pass} pass · ${g.fail} fail · mean ${g.mean_seconds.toFixed(0)}s</span></div>`).join('') :
+        '<div class="muted">No data</div>';
+
+      const r = a.review;
+      const routing = Object.entries(a.routing).map(([k, v]) => `${escapeHtml(k)} ${v}`).join(' · ') || 'none';
+      const costs = Object.entries(a.cost_by_agent_usd).map(([k, v]) => `${escapeHtml(k)} $${v.toFixed(2)}`).join(' · ') || 'none';
+      document.getElementById('a-review').innerHTML =
+        `<div class="bar-row">Reviews: ${r.results} · with blocking findings: ${r.with_blocking} · findings: ${r.findings} (${r.blocking} blocking)</div>` +
+        `<div class="bar-row">Routing: ${routing}</div><div class="bar-row">Cost: ${costs}</div>` +
+        `<div class="bar-row">Schema repairs: ${t.schema_repairs}</div>`;
+
+      const errs = Object.entries(a.errors_by_span);
+      document.getElementById('a-errors').innerHTML = errs.length ?
+        errs.map(([k, v]) => `<div class="bar-row"><span class="bar-label">${escapeHtml(k)}</span><span>${v}</span></div>`).join('') :
+        '<div class="muted">None</div>';
+      document.getElementById('a-foot').innerText =
+        `${a.spans_analyzed} spans analyzed, ${a.spans_skipped} skipped (synthetic or not tied to a ticket).`;
+    }
+
     let lastData = null;
 
     async function fetchState() {
@@ -349,7 +483,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     fetchState();
-    setInterval(fetchState, 3000);
+    setInterval(() => { fetchState(); if (view === 'analytics') fetchAnalytics(); }, 3000);
   </script>
 </body>
 </html>
@@ -437,23 +571,30 @@ def collect_state(root: Path) -> dict[str, Any]:
 class UiHandler(http.server.BaseHTTPRequestHandler):
     root: Path
 
+    def _send_json(self, produce) -> None:
+        try:
+            payload = json.dumps(produce()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(payload)
+        except Exception as exc:  # noqa: BLE001
+            err = json.dumps({"error": str(exc)}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(err)
+
     def do_GET(self) -> None:
-        if self.path == "/api/state":
-            try:
-                data = collect_state(self.root)
-                payload = json.dumps(data).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(payload)))
-                self.send_header("Cache-Control", "no-cache")
-                self.end_headers()
-                self.wfile.write(payload)
-            except Exception as exc:  # noqa: BLE001
-                err = json.dumps({"error": str(exc)}).encode("utf-8")
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(err)
+        url = urlsplit(self.path)
+        if url.path == "/api/state":
+            self._send_json(lambda: collect_state(self.root))
+            return
+        if url.path == "/api/analytics":
+            repo = parse_qs(url.query).get("repo", [None])[0]
+            self._send_json(lambda: collect_analytics(self.root, repo))
             return
 
         if self.path == "/" or self.path.startswith("/?"):
