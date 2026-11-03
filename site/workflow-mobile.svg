@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 755" role="img" aria-labelledby="title description">
+  <title id="title">One Devflow ticket, from issue to merge</title>
+  <desc id="description">A vertical route through plan, approval, build, verify, review, approval and merge for illustrative issue 12. Review findings can return to build.</desc>
+  <style>
+    .m{font-family:ui-monospace,Menlo,Consolas,monospace}.s{font-family:system-ui,-apple-system,sans-serif}.g{font-family:Georgia,serif}
+  </style>
+  <rect width="360" height="755" fill="#f6efdd"/>
+  <path d="M1.5 1.5H358.5V753.5H1.5Z" fill="none" stroke="#0e1b33" stroke-width="3"/>
+  <path d="M2 48H358" stroke="#0e1b33" stroke-width="2"/>
+  <text x="18" y="31" class="m" font-size="13" font-weight="700" letter-spacing="1.1" fill="#0e1b33">PLATE 01 / TICKET ROUTE</text>
+  <rect x="18" y="64" width="324" height="76" fill="#fffaf0" stroke="#0e1b33" stroke-width="2"/>
+  <rect x="18" y="64" width="324" height="25" fill="#0e1b33"/>
+  <text x="30" y="81" class="m" font-size="11" letter-spacing="1.2" fill="#fffaf0">GITHUB ISSUE #12 · ILLUSTRATIVE</text>
+  <text x="30" y="116" class="g" font-size="24" font-weight="700" fill="#0e1b33">Add a health endpoint</text>
+  <path class="route" pathLength="1" d="M48 154V611" stroke="#0e1b33" stroke-width="3" fill="none"/>
+
+  <g class="node"><circle cx="48" cy="183" r="19" fill="#0e1b33"/><text x="48" y="189" text-anchor="middle" class="g" font-size="20" fill="#fffaf0">1</text><text x="86" y="180" class="m" font-size="14" font-weight="700" fill="#0e1b33">PLAN</text><text x="86" y="199" class="s" font-size="13" fill="#3f4b66">OpenClaw clarifies and proposes.</text></g>
+  <g class="node n2"><path d="M48 227L68 247L48 267L28 247Z" fill="#b92d14"/><text x="48" y="252" text-anchor="middle" class="m" font-size="13" font-weight="700" fill="#fffaf0">A</text><text x="86" y="243" class="m" font-size="14" font-weight="700" fill="#b92d14">HUMAN GATE</text><text x="86" y="262" class="s" font-size="13" fill="#3f4b66">Approve the issue plan.</text></g>
+  <g class="node n3"><circle cx="48" cy="315" r="19" fill="#0e1b33"/><text x="48" y="321" text-anchor="middle" class="g" font-size="20" fill="#fffaf0">2</text><text x="86" y="311" class="m" font-size="14" font-weight="700" fill="#0e1b33">BUILD</text><text x="86" y="330" class="s" font-size="13" fill="#3f4b66">Tests and code in a worktree.</text></g>
+  <g class="node n4"><circle cx="48" cy="383" r="19" fill="#0e1b33"/><text x="48" y="389" text-anchor="middle" class="g" font-size="20" fill="#fffaf0">3</text><text x="86" y="379" class="m" font-size="14" font-weight="700" fill="#0e1b33">VERIFY</text><text x="86" y="398" class="s" font-size="13" fill="#3f4b66">Engine runs configured gates.</text></g>
+  <g class="node n5"><circle cx="48" cy="451" r="19" fill="#0e1b33"/><text x="48" y="457" text-anchor="middle" class="g" font-size="20" fill="#fffaf0">4</text><text x="86" y="447" class="m" font-size="14" font-weight="700" fill="#0e1b33">REVIEW</text><text x="86" y="466" class="s" font-size="13" fill="#3f4b66">Independent diff and gate check.</text></g>
+  <path d="M305 444h23v-130h-23" stroke="#1f4fd8" stroke-width="2" stroke-dasharray="5 4" fill="none"/>
+  <path d="M305 314l8-6m-8 6l8 6" stroke="#1f4fd8" stroke-width="2"/>
+  <text x="324" y="420" text-anchor="end" class="m" font-size="10" fill="#1f4fd8">REVISE ↗</text>
+  <g class="node n6"><path d="M48 499L68 519L48 539L28 519Z" fill="#b92d14"/><text x="48" y="524" text-anchor="middle" class="m" font-size="13" font-weight="700" fill="#fffaf0">B</text><text x="86" y="515" class="m" font-size="14" font-weight="700" fill="#b92d14">HUMAN GATE</text><text x="86" y="534" class="s" font-size="13" fill="#3f4b66">Approve the PR for merge.</text></g>
+  <g class="node n7"><circle cx="48" cy="587" r="19" fill="#1f4fd8"/><text x="48" y="593" text-anchor="middle" class="g" font-size="20" fill="#fffaf0">5</text><text x="86" y="583" class="m" font-size="14" font-weight="700" fill="#0e1b33">MERGE</text><text x="86" y="602" class="s" font-size="13" fill="#3f4b66">CI checked; reviewed SHA pinned.</text></g>
+  <rect x="18" y="641" width="324" height="78" fill="#0e1b33"/>
+  <text x="32" y="663" class="m" font-size="11" letter-spacing="1.1" fill="#9db6ff">WHO OWNS WHAT</text>
+  <text x="32" y="685" class="s" font-size="12" fill="#fffaf0">Agents judge · engine checks · you decide</text>
+  <text x="32" y="703" class="s" font-size="12" fill="#fffaf0">at the two default approval gates.</text>
+</svg>
