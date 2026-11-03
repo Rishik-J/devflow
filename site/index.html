@@ -21,7 +21,7 @@
   <div class="dark">
     <header class="site-header shell">
       <a class="brand" href="./" aria-label="Devflow home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>devflow</a>
-      <nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#setup">Get started</a><a class="nav-github" href="https://github.com/Rishik-J/devflow">GitHub <span aria-hidden="true">↗</span></a></nav>
+      <nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#inside-the-run">Inside a run</a><a href="#setup">Get started</a><a class="nav-github" href="https://github.com/Rishik-J/devflow">GitHub <span aria-hidden="true">↗</span></a></nav>
     </header>
     <main id="main">
       <section class="hero shell" aria-labelledby="hero-title">
@@ -59,10 +59,38 @@
           <div class="process-row"><span>04</span><h3>Merge with confidence</h3><p>Devflow checks CI and merges the exact commit that passed review. PR approval is required by default.</p></div>
         </div>
       </section>
-      <section class="section section-tint" aria-labelledby="context-title"><div class="shell context-grid">
-        <div class="context-copy"><h2 id="context-title">Context in.<br>Evidence out.</h2><p>Agents start with a local Graphify code graph. As they work, optional, opt-in Langfuse content tracing shows supplied prompts, final responses, exposed tool calls, handoffs, and the review loop so you can learn from each ticket.</p><div class="context-links"><a href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md">Explore observability <span aria-hidden="true">↗</span></a><a href="https://github.com/Rishik-J/devflow#code-graph-and-learning">Explore Graphify <span aria-hidden="true">↗</span></a></div><p class="context-note">Graphify runs locally. Langfuse can run in Docker on your machine. Model providers still receive context used for their calls.</p></div>
-        <div class="trace" aria-label="Illustrative trace of a Devflow run"><div class="trace-top"><span class="trace-dot" aria-hidden="true"></span><strong>ticket #12</strong><span>workflow trace</span></div><div class="trace-body"><div class="trace-row"><span>graph context</span><i class="trace-bar bar-graph"></i><small>local</small></div><div class="trace-row"><span>plan</span><i class="trace-bar bar-plan"></i><small>OpenClaw</small></div><div class="trace-row"><span>code + tests</span><i class="trace-bar bar-code"></i><small>coding agent</small></div><div class="trace-row"><span>test gates</span><i class="trace-bar bar-test"></i><small>engine</small></div><div class="trace-row"><span>review</span><i class="trace-bar bar-review"></i><small>reviewer</small></div></div><div class="trace-foot">Illustrative sequence · no measured timings shown</div></div>
-      </div></section>
+      <section class="section section-tint run-section" id="inside-the-run" aria-labelledby="run-title">
+        <div class="shell">
+          <div class="run-intro"><div><h2 id="run-title">See the whole system move.</h2><p>One issue passes between a planner, coding agent, test engine, reviewer, and GitHub. Select a component to follow its work and the trace it leaves behind.</p></div><p class="run-key">The example below shows the workflow and span names Devflow emits. Ticket #12 and its content are illustrative.</p></div>
+          <div class="flow-board" aria-label="Components of the Devflow ticket workflow">
+            <div class="flow-inputs"><span><span class="flow-input-dot"></span> GitHub Project <small>issue + queue</small></span><span><span class="flow-input-dot"></span> Graphify <small>local code context</small></span></div>
+            <div class="flow-chain">
+              <button class="flow-node" type="button" data-flow-step="0" aria-current="step"><span class="flow-node-num">01</span><strong>OpenClaw</strong><small>Plan + clarify</small></button>
+              <button class="flow-node" type="button" data-flow-step="1"><span class="flow-node-num">02</span><strong>Coding agent</strong><small>Tests + code</small></button>
+              <button class="flow-node" type="button" data-flow-step="2"><span class="flow-node-num">03</span><strong>Devflow engine</strong><small>Clean test gates</small></button>
+              <button class="flow-node" type="button" data-flow-step="3"><span class="flow-node-num">04</span><strong>Reviewer</strong><small>Diff + evidence</small></button>
+              <button class="flow-node" type="button" data-flow-step="4"><span class="flow-node-num">05</span><strong>GitHub PR</strong><small>CI + exact SHA</small></button>
+            </div>
+            <div class="flow-output"><span class="flow-loop">Review findings return to the coding agent <span aria-hidden="true">↶</span></span><span class="flow-capture"><span class="flow-input-dot"></span> Langfuse <small>optional local trace</small></span></div>
+          </div>
+          <div class="trace-explorer" aria-label="Illustrative Langfuse trace explorer">
+            <div class="trace-header"><div><span class="trace-live" aria-hidden="true"></span><strong>ticket.run</strong><span class="trace-session">session · devflow:issue-12</span></div><span class="trace-tag">Illustrative trace</span></div>
+            <div class="trace-layout">
+              <div class="trace-tree" aria-label="Trace spans"><p class="trace-tree-title">OBSERVATIONS</p>
+                <button type="button" data-trace-step="0" aria-current="true"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.refining</strong><small>OpenClaw · plan + approval</small></span><i aria-hidden="true"></i></button>
+                <button type="button" data-trace-step="1"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.implementing</strong><small>Coding CLI · isolated worktree</small></span><i aria-hidden="true"></i></button>
+                <button type="button" data-trace-step="2"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.gates</strong><small>Devflow · clean checkout</small></span><i aria-hidden="true"></i></button>
+                <button type="button" data-trace-step="3"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.in_review</strong><small>Reviewer · diff + gates</small></span><i aria-hidden="true"></i></button>
+                <button type="button" data-trace-step="4"><span class="trace-branch" aria-hidden="true">└─</span><span><strong>stage.awaiting_merge_approval</strong><small>GitHub · checks + reviewed SHA</small></span><i aria-hidden="true"></i></button>
+                <div class="trace-extra"><span>Related observations</span><code>graph.refresh</code><code>routing.selected</code><code>gate.result</code><code>tool.github</code></div>
+              </div>
+              <div class="trace-inspector"><div class="trace-inspector-head"><span id="trace-phase">PLAN / 01</span><span class="trace-inspector-type">CHAIN</span></div><h3 id="trace-title">stage.refining</h3><p id="trace-description">OpenClaw turns the issue into a plan with acceptance criteria. The engine records the handoff and waits for plan approval when that gate is enabled.</p><dl class="trace-facts"><div><dt>Component</dt><dd id="trace-component">OpenClaw planner</dd></div><div><dt>Child observation</dt><dd><code id="trace-child">agent.&lt;driver&gt;.planner</code></dd></div><div><dt>Evidence</dt><dd id="trace-artifact">Plan, questions, approval state</dd></div></dl><div class="trace-note"><span aria-hidden="true">↳</span><p id="trace-note">The supplied prompt and final response are visible only when content capture is enabled.</p></div></div>
+            </div>
+            <div class="trace-footer"><span>Actual span names · example issue and artifacts</span><span>Each resume starts a new trace in the same ticket session.</span></div>
+          </div>
+          <div class="run-end"><div><h3>Context in. Evidence out.</h3><p>Graphify keeps the code graph local. Langfuse can run in Docker on your machine and collect stage, agent, tool, and gate spans. Detailed prompts, responses, and exposed tool calls require opt-in content capture.</p></div><div><a href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md">Explore observability <span aria-hidden="true">↗</span></a><a href="https://github.com/Rishik-J/devflow#code-graph-and-learning">Explore Graphify <span aria-hidden="true">↗</span></a><p>Model providers still receive context used for their calls. OpenClaw's private internal steps are not exposed.</p></div></div>
+        </div>
+      </section>
       <section class="section shell setup" id="setup" aria-labelledby="setup-title"><div class="section-lead"><h2 id="setup-title">Start with one small issue.</h2><p>Bring a GitHub repository, a Project queue, OpenClaw, Graphify, and an authenticated coding-agent CLI. Devflow runs on macOS or Linux with Python 3.11+.</p></div><ol class="setup-list"><li><span>01</span><div><h3>Install the CLI</h3><pre><code>uv tool install "git+https://github.com/Rishik-J/devflow.git"
 uv tool install graphifyy</code></pre></div></li><li><span>02</span><div><h3>Connect your tools</h3><p>Sign in with <code>gh</code>, start the OpenClaw gateway, and run <code>devflow setup-openclaw</code>. Check the connection with <code>devflow doctor</code>.</p></div></li><li><span>03</span><div><h3>Initialize and run</h3><p>Run <code>devflow init</code> in your repository. Review <code>.devflow/config.toml</code>, then preview the queue with <code>devflow run --dry-run</code>.</p></div></li></ol><a class="button button-dark" href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Follow the complete setup guide <span aria-hidden="true">↗</span></a></section>
       <section class="section section-dark closing"><div class="shell closing-inner"><div><h2>Give your agents a workflow.</h2><p>Start with a ticket. Keep the plan, test results, review, and merge connected.</p></div><a class="button button-white" href="https://github.com/Rishik-J/devflow">View Devflow on GitHub <span aria-hidden="true">↗</span></a></div></section>
