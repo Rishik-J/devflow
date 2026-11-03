@@ -1281,3 +1281,55 @@ def test_priority_check_only_short_circuits_on_new_failures(tmp_path: Path, monk
         assert check(res("FAILED tests/test_calc.py::T::test_new - boom")) is True
     finally:
         env.store.close()
+
+
+# ---------------------------------------------------------------- persisted gate evidence
+
+
+def test_passing_gates_persist_results_failures_and_impact(env: Env):
+    drive_to_merge_gate(env)
+    p = env.store.stage_results("#1", "gates")[-1]["payload"]
+    assert p["ok"] is True and p["failures"] == []
+    assert {"ok", "summary", "unconfigured", "findings"} <= set(p)
+    assert p["results"]
+    r = p["results"][0]
+    assert set(r) == {"project", "gate", "command", "ok", "exit_code", "duration_s",
+                      "timed_out", "output_tail"}
+    assert r["ok"] is True and r["exit_code"] == 0
+    assert isinstance(p["impacted_tests"], list)
+    assert p["impact"] is None or "impacted_tests" in p["impact"]
+    review = env.store.stage_results("#1", "review")[-1]["payload"]
+    assert "gate_results" in review and "impact" in review
+
+
+def test_failing_gates_persist_failures_and_bounded_output(env: Env, monkeypatch):
+    from devflow import engine as engine_mod
+    from devflow.gates import GateReport, GateResult
+
+    big = "x" * 10_000
+    real = engine_mod.run_gates
+
+    def spy(*a, **kw):
+        rep = real(*a, **kw)
+        return GateReport([GateResult(r.project, r.gate, r.command, r.ok, r.exit_code,
+                                      r.duration_s, r.timed_out, big) for r in rep.results],
+                          rep.missing)
+
+    monkeypatch.setattr(engine_mod, "run_gates", spy)
+    monkeypatch.setattr(Engine, "_bounded_impact", staticmethod(lambda impact: None))
+
+    def bad_coder(req):
+        (req.cwd / "src" / "calc.py").write_text(bad_calc())
+        return "oops"
+
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    out = env.engine(coder=bad_coder, triage=retry_triage()).run(1)
+    assert out.status == "escalated"
+    p = env.store.stage_results("#1", "gates")[0]["payload"]
+    assert p["ok"] is False and p["impact"] is None
+    assert p["failures"] and set(p["failures"][0]) == {"project", "gate", "command", "new"}
+    assert len(p["failures"][0]["new"]) <= 20
+    failed = [r for r in p["results"] if not r["ok"]]
+    assert failed and failed[0]["exit_code"] != 0
+    assert all(len(r["output_tail"]) <= 2000 for r in p["results"])

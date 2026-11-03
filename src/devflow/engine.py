@@ -52,6 +52,8 @@ from .store import Store
 MAX_CLARIFICATION_ROUNDS = 3
 MAX_PLAN_CYCLES = 4
 FEEDBACK_OUTPUT_CHARS = 1500
+OUTPUT_TAIL_CHARS = 2000
+IMPACT_LIST_CAP = 100
 
 
 class _Wait(telemetry.WaitSignal):
@@ -591,6 +593,43 @@ class Engine:
         verdict = baseline.evaluate(report, base)
         return verdict, diffguard.analyze(path, base_sha), report
 
+    @staticmethod
+    def _bounded_impact(impact) -> dict | None:
+        """`ImpactReport.to_dict()` with every list capped; None if it cannot be serialized."""
+        try:
+            if impact is None:
+                return None
+            data = impact.to_dict()
+            cap = IMPACT_LIST_CAP
+            for key in ("files", "unknown_files", "symbols", "dependent_modules",
+                        "external_contracts", "uncovered"):
+                if isinstance(data.get(key), list):
+                    data[key] = data[key][:cap]
+            data["callers"] = {h: cs[:cap] for h, cs in data.get("callers", {}).items()}
+            data["test_coverage"] = dict(list(data.get("test_coverage", {}).items())[:cap])
+            return data
+        except Exception:  # noqa: BLE001 - never stop a ticket
+            return None
+
+    def _evidence(self, wt: Path, base_sha: str, verdict: baseline.Verdict,
+                  report: GateReport | None, impact) -> dict:
+        """Bounded, additive gate evidence for the stage payload (results, failures, impact)."""
+        results = [{"project": r.project, "gate": r.gate, "command": r.command, "ok": r.ok,
+                    "exit_code": r.exit_code, "duration_s": r.duration_s,
+                    "timed_out": r.timed_out, "output_tail": (r.output_tail or "")[-OUTPUT_TAIL_CHARS:]}
+                   for r in (report.results if report else [])]
+        failures = [{"project": f.project, "gate": f.gate, "command": f.command,
+                     "new": list(f.new[:20])} for f in verdict.new_failures]
+        bounded = self._bounded_impact(impact)
+        tests: list[str] = []
+        if impact is not None:
+            with suppress(Exception):
+                tests = graphctx.impacted_tests(impact, gitops.diff_names(wt, base_sha))[:IMPACT_LIST_CAP]
+        if bounded is not None:
+            bounded["impacted_tests"] = tests
+        return {"results": results, "failures": failures, "impact": bounded,
+                "impacted_tests": tests}
+
     def _failure_text(self, verdict: baseline.Verdict, findings: list[diffguard.Finding]) -> str:
         lines = []
         for f in verdict.new_failures:
@@ -616,12 +655,15 @@ class Engine:
             verdict = baseline.Verdict(ok=False, new_failures=[baseline.NewFailure(
                 ".", "changes", "git diff", ["no changes were made"], "")])
             findings: list[diffguard.Finding] = []
+            report, impact = None, None
         else:
-            verdict, findings, _ = self._verify(wt, t.base_sha, self._impact(wt, t.base_sha))
+            impact = self._impact(wt, t.base_sha)
+            verdict, findings, report = self._verify(wt, t.base_sha, impact)
         ok = verdict.ok and not diffguard.blocking(findings)
+        evidence = self._evidence(wt, t.base_sha, verdict, report, impact)
         self._put(t, "gates", {
             "ok": ok, "summary": verdict.summary(), "unconfigured": verdict.unconfigured,
-            "findings": [vars(f) for f in findings]}, ok=ok)
+            "findings": [vars(f) for f in findings], **evidence}, ok=ok)
         if ok:
             t.sessions.pop("gate_fail_sig", None)
             self.store.save_ticket(t)
@@ -695,7 +737,8 @@ class Engine:
         review_wt = worktree.create_detached(
             self.cfg.root, self.cfg.worktree_root / f"{t.branch.split('/', 1)[-1]}-review", head)
         impact = self._impact(review_wt, t.base_sha)
-        verdict, findings, _ = self._verify(review_wt, t.base_sha, impact)
+        verdict, findings, report = self._verify(review_wt, t.base_sha, impact)
+        evidence = self._evidence(review_wt, t.base_sha, verdict, report, impact)
         blast = self._blast_radius(review_wt, t.base_sha, impact)
         facts = verdict.summary() + (f"\nNot configured: {', '.join(verdict.unconfigured)}"
                                      if verdict.unconfigured else "")
@@ -731,6 +774,7 @@ class Engine:
                                 "verdict": review["verdict"], "approved": approved,
                                 "findings": review["findings"], "engine_gates_ok": engine_ok,
                                 "facts": facts, "notes": review["integration"].get("notes", ""),
+                                "impact": evidence["impact"], "gate_results": evidence["results"],
                                 "reply": routed.result.text[-3000:]}, ok=approved)
         self._say(t, self._format_review(review, routed.agent, routed.independent, facts, approved),
                   number=self._pr_number(t))
