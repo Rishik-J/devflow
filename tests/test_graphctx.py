@@ -1,5 +1,7 @@
 import json
 import shutil
+import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -372,3 +374,217 @@ def test_graph_age_comes_from_mtime_and_does_not_decide_freshness(repo: Path):
     age = graphctx.graph_age_seconds(repo)
     assert isinstance(age, int) and 4990 <= age <= 5100
     assert graphctx.graph_freshness(repo) == "fresh"
+
+
+# ---- impact engine -------------------------------------------------------------------------
+
+def _n(nid, label, file, line=1, **kw):
+    return {**node(nid, label, file), "source_location": f"L{line}", "file_type": "code", **kw}
+
+
+def _e(src, tgt, rel="calls", file=None):
+    return {"source": src, "target": tgt, "relation": rel, "source_file": file or src.split(":")[0]}
+
+
+def _chain_graph(repo: Path, shuffle: bool = False):
+    nodes = [
+        _n("m.py", "m.py", "m.py"), _n("m.py:f", "f()", "m.py", 3), _n("m.py:_p", "_p()", "m.py", 9),
+        _n("a.py:g", "g()", "a.py", 2), _n("b.py:h", "h()", "b.py", 2),
+        _n("c.py:i", "i()", "c.py", 2), _n("imp.py:x", "x()", "imp.py"),
+        _n("tests/test_m.py:t", "test_f()", "tests/test_m.py", 4),
+        _n("tests/test_far.py:t", "test_far()", "tests/test_far.py", 4),
+        _n("mid.py:k", "k()", "mid.py"), _n("mid2.py:k", "k2()", "mid2.py"),
+        _n("rat", "why", "m.py", file_type="rationale"),
+    ]
+    nodes[0]["file_type"] = "code"
+    links = [
+        _e("m.py", "m.py:f", "contains"), _e("m.py", "m.py:_p", "contains"),
+        _e("a.py:g", "m.py:f"), _e("b.py:h", "a.py:g"), _e("c.py:i", "b.py:h", "uses"),
+        _e("a.py:g", "m.py:_p"), _e("m.py:f", "d.py:z"),
+        _e("imp.py:x", "m.py", "imports"),
+        _e("tests/test_m.py:t", "m.py:f"),
+        _e("tests/test_far.py:t", "mid2.py:k"),
+        _e("mid2.py:k", "a.py:g"),
+        _e("rat", "m.py", "rationale_for"),
+    ]
+    nodes.append(_n("d.py:z", "z()", "d.py"))
+    nodes.append(_n("", "nofile", ""))
+    if shuffle:
+        nodes.reverse()
+        links.reverse()
+    write_graph(repo, nodes, links)
+
+
+def test_symbols_defined_and_touched_sorted(tmp_path: Path):
+    _chain_graph(tmp_path)
+    syms = graphctx.symbols_for_files(tmp_path, ["m.py"])
+    assert [(s.id, s.role, s.line) for s in syms] == [
+        ("d.py:z", "touched", 1), ("m.py:f", "defined", 3), ("m.py:_p", "defined", 9)]
+    assert syms.unknown_files == []
+
+
+def test_symbols_paths_unknown_and_dupes(tmp_path: Path):
+    _chain_graph(tmp_path)
+    a = graphctx.symbols_for_files(tmp_path, [str(tmp_path / "m.py"), "./m.py", "m.py", "new.py"])
+    assert a == graphctx.symbols_for_files(tmp_path, ["m.py"])
+    assert a.unknown_files == ["new.py"]
+
+
+def test_blast_depth_and_shortest_hop(tmp_path: Path):
+    _chain_graph(tmp_path)
+    r1 = graphctx.blast_radius(tmp_path, ["m.py"], depth=1)
+    assert {c.id for c in r1.callers[1]} == {"a.py:g", "tests/test_m.py:t"}
+    r2 = graphctx.blast_radius(tmp_path, ["m.py"], depth=2)
+    assert {c.id for c in r2.callers[2]} >= {"b.py:h", "mid2.py:k"}
+    assert all(c.hop == 2 for c in r2.callers[2])
+    with pytest.raises(ValueError):
+        graphctx.blast_radius(tmp_path, ["m.py"], depth=0)
+    with pytest.raises(ValueError):
+        graphctx.blast_radius(tmp_path, ["m.py"], depth=-1)
+    big = graphctx.blast_radius(tmp_path, ["m.py"], depth=9)
+    ids = [c.id for cs in big.callers.values() for c in cs]
+    assert len(ids) == len(set(ids)) and "m.py:f" not in ids
+
+
+@pytest.mark.parametrize("rel", sorted(graphctx.CALLER_RELATIONS))
+def test_each_caller_relation_traversed(tmp_path: Path, rel: str):
+    write_graph(tmp_path, [_n("a:x", "X", "a.py"), _n("b:y", "Y", "b.py")], [_e("b:y", "a:x", rel)])
+    (c,) = graphctx.blast_radius(tmp_path, ["a.py"], 1).callers[1]
+    assert c.relation == rel and c.file == "b.py"
+
+
+def test_unrelated_relation_not_a_caller(tmp_path: Path):
+    write_graph(tmp_path, [_n("a:x", "X", "a.py"), _n("b:y", "Y", "b.py")],
+                [_e("b:y", "a:x", "rationale_for")])
+    assert graphctx.blast_radius(tmp_path, ["a.py"]).callers == {1: [], 2: []}
+
+
+def test_cycle_terminates(tmp_path: Path):
+    write_graph(tmp_path, [_n("a:a", "A", "a.py"), _n("b:b", "B", "b.py"), _n("c:c", "C", "c.py")],
+                [_e("a:a", "b:b"), _e("b:b", "c:c"), _e("c:c", "a:a"), _e("a:a", "a:a")])
+    r = graphctx.blast_radius(tmp_path, ["a.py"], depth=5)
+    assert [(c.id, c.hop) for cs in r.callers.values() for c in cs] == [
+        ("c:c", 1), ("b:b", 2)]
+
+
+def test_dependent_modules(tmp_path: Path):
+    _chain_graph(tmp_path)
+    mods = graphctx.blast_radius(tmp_path, ["m.py"]).dependent_modules
+    d = {m["file"]: m["hop"] for m in mods}
+    assert d["imp.py"] == 1 and d["a.py"] == 1 and d["b.py"] == 2 and "m.py" not in d
+    assert [m["file"] for m in mods] == sorted(d)
+
+
+def test_external_contracts(tmp_path: Path):
+    _chain_graph(tmp_path)
+    cs = graphctx.blast_radius(tmp_path, ["m.py"]).external_contracts
+    assert [(c["label"], c["consumers"]) for c in cs] == [("f()", ["a.py", "tests/test_m.py"])]
+    write_graph(tmp_path, [_n("a:x", "X", "a.py"), _n("i:i", "i", "__init__.py")],
+                [_e("i:i", "a:x", "re_exports")])
+    assert [c["consumers"] for c in graphctx.blast_radius(tmp_path, ["a.py"]).external_contracts] \
+        == [["__init__.py"]]
+    write_graph(tmp_path, [_n("a:x", "X", "a.py"), _n("a:y", "Y", "a.py")], [_e("a:y", "a:x")])
+    assert graphctx.blast_radius(tmp_path, ["a.py"]).external_contracts == []
+
+
+def test_is_test_file():
+    t = graphctx._is_test_file
+    assert t("tests/x.py") and t("test/x.py") and t("a/test_x.py") and t("a/x_test.py")
+    assert not t("contest.py") and not t("src/testing_utils.py")
+
+
+def test_coverage_and_uncovered(tmp_path: Path):
+    _chain_graph(tmp_path)
+    cov = graphctx.test_coverage_map(tmp_path, ["m.py:f", "m.py:_p"])
+    assert cov["m.py:f"] == ["tests/test_m.py"]
+    assert cov["m.py:_p"] == []  # test_m reaches f, not _p
+    far = graphctx.test_coverage_map(tmp_path, ["a.py:g"])
+    assert far["a.py:g"] == ["tests/test_far.py"]  # 2 hops
+    assert graphctx.test_coverage_map(tmp_path, ["a.py:g"], files=["tests/test_other.py"]) \
+        ["a.py:g"] == ["tests/test_far.py", "tests/test_other.py"]
+    rep = graphctx.impact(tmp_path, ["m.py"])
+    assert rep.uncovered == ["m.py:_p"]
+    assert "m.py:f" not in rep.uncovered
+
+
+def test_three_hops_not_coverage(tmp_path: Path):
+    write_graph(tmp_path, [_n("a:x", "X", "a.py"), _n("b:y", "Y", "b.py"), _n("c:z", "Z", "c.py"),
+                           _n("t:t", "t", "tests/test_t.py")],
+                [_e("b:y", "a:x"), _e("c:z", "b:y"), _e("t:t", "c:z")])
+    assert graphctx.test_coverage_map(tmp_path, ["a:x"]) == {"a:x": []}
+
+
+def test_impact_dict_markdown_deterministic(tmp_path: Path, monkeypatch):
+    _chain_graph(tmp_path)
+    a = graphctx.impact(tmp_path, ["m.py", "new.py"])
+    assert set(a.to_dict()) == {"files", "unknown_files", "depth", "graph_state", "symbols",
+                                "callers", "dependent_modules", "external_contracts",
+                                "test_coverage", "uncovered"}
+    assert a.graph_state == graphctx.graph_freshness(tmp_path)
+    j, md = json.dumps(a.to_dict()), a.to_markdown()
+    _chain_graph(tmp_path, shuffle=True)
+    b = graphctx.impact(tmp_path, ["new.py", "m.py"])
+    assert json.dumps(b.to_dict()) == j and b.to_markdown() == md
+    for h in ("## Symbols", "## Callers", "## Dependent modules", "## External contracts",
+              "## Test coverage", "## Uncovered", "new.py"):
+        assert h in md
+
+    def boom(*a, **k):
+        raise AssertionError("no subprocess/network")
+    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(socket, "socket", boom)
+    graphctx.symbols_for_files(tmp_path, ["m.py"])
+    graphctx.blast_radius(tmp_path, ["m.py"])
+    graphctx.test_coverage_map(tmp_path, ["m.py:f"])
+
+
+def test_markdown_empty(tmp_path: Path):
+    write_graph(tmp_path, [_n("a:x", "X", "a.py")], [])
+    md = graphctx.impact(tmp_path, ["zzz.py"]).to_markdown()
+    assert "- none" in md and "zzz.py" in md
+
+
+def test_impact_missing_graph_raises(tmp_path: Path):
+    with pytest.raises(graphctx.GraphUnavailable):
+        graphctx.impact(tmp_path, ["a.py"])
+
+
+# ---- CLI ---------------------------------------------------------------------------------
+
+def _cli(argv, repo, monkeypatch):
+    from devflow.cli import main
+    calls = []
+    monkeypatch.setattr(graphctx, "ensure_fresh", lambda root, **k: calls.append(root))
+    return main(["graph", "impact", *argv, "--path", str(repo)]), calls
+
+
+def test_cli_impact_json_and_options(repo: Path, monkeypatch, capsys):
+    _chain_graph(repo)
+    rc, calls = _cli(["m.py"], repo, monkeypatch)
+    out = capsys.readouterr().out
+    d = json.loads(out)
+    assert rc == 0 and calls and d["depth"] == 2 and "uncovered" in d
+    assert len(d["callers"]["2"]) > 0
+    rc, _ = _cli(["m.py", "a.py", "--depth", "1"], repo, monkeypatch)
+    d1 = json.loads(capsys.readouterr().out)
+    assert rc == 0 and d1["files"] == ["a.py", "m.py"] and d1["depth"] == 1
+    rc, _ = _cli(["m.py", "--format", "markdown"], repo, monkeypatch)
+    assert rc == 0 and capsys.readouterr().out.startswith("# Impact report")
+
+
+def test_cli_impact_failures(repo: Path, tmp_path_factory, monkeypatch, capsys):
+    rc, _ = _cli(["m.py"], repo, monkeypatch)
+    cap = capsys.readouterr()
+    assert rc != 0 and cap.out == "" and "error" in cap.err
+    _chain_graph(repo)
+    rc, _ = _cli(["m.py", "--depth", "0"], repo, monkeypatch)
+    cap = capsys.readouterr()
+    assert rc != 0 and cap.out == "" and "depth" in cap.err
+    rc, _ = _cli(["m.py"], tmp_path_factory.mktemp("nogit"), monkeypatch)
+    assert rc == 2
+    from devflow.cli import main
+    with pytest.raises(SystemExit) as ex:
+        main(["graph", "impact"])
+    assert ex.value.code != 0
+    with pytest.raises(SystemExit):
+        main(["graph", "impact", "m.py", "--format", "xml"])

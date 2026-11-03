@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -274,6 +275,20 @@ def _graph(args: argparse.Namespace) -> int:
         graphctx.ensure_fresh(root)
         print(graphctx.digest(root, args.files or None))
         return 0
+    if cmd == "impact":
+        if args.depth < 1:
+            print("error: --depth must be >= 1", file=sys.stderr)
+            return 2
+        graphctx.ensure_fresh(root)
+        try:
+            report = graphctx.impact(root, args.files, args.depth)
+        except graphctx.GraphUnavailable:
+            print("error: code graph unavailable or not built (run `devflow graph refresh`)",
+                  file=sys.stderr)
+            return 1
+        print(json.dumps(report.to_dict(), indent=2, sort_keys=True) if args.format == "json"
+              else report.to_markdown().rstrip("\n"))
+        return 0
     binary = shutil.which("graphify")
     if not binary:
         print("error: graphify not installed (uv tool install graphifyy)", file=sys.stderr)
@@ -327,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     p_agents.add_argument("path", nargs="?", default=".")
     p_agents.set_defaults(func=_agents)
 
-    p_graph = sub.add_parser("graph",help="keep the code graph fresh; print agent context")
+    p_graph = sub.add_parser("graph",help="keep the code graph fresh; print agent context and impact")
     gsub = p_graph.add_subparsers(dest="graph_cmd", required=True)
     for name, help_text in (
         ("status", "is the graph up to date with the working tree?"),
@@ -341,6 +356,12 @@ def main(argv: list[str] | None = None) -> int:
             g.add_argument("--force", action="store_true")
         if name == "context":
             g.add_argument("--files", nargs="*", default=[], help="repo-relative paths")
+    g_imp = gsub.add_parser("impact", help="symbols, callers, dependents and covering tests for files")
+    g_imp.add_argument("files", nargs="+", help="repo-relative (or absolute) paths")
+    g_imp.add_argument("--depth", type=int, default=2, help="caller hops to follow (default 2)")
+    g_imp.add_argument("--format", choices=["json", "markdown"], default="json")
+    g_imp.add_argument("--path", default=".", help="repo or worktree (default: cwd)")
+    g_imp.set_defaults(func=_graph, graph_cmd="impact")
     g_hooks = gsub.add_parser("hooks", help="install/remove graphify's git hooks (rebuild on commit)")
     g_hooks.add_argument("action", choices=["install", "uninstall", "status"])
     g_hooks.add_argument("path", nargs="?", default=".")
