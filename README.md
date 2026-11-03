@@ -349,8 +349,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and [DESIGN.
 ## Landing page
 
 The public site lives at [rishik-j.github.io/devflow](https://rishik-j.github.io/devflow/).
-Its source is plain HTML, CSS and a local SVG favicon in `site/`; no build step or runtime
-dependencies are needed. Preview from the repository root:
+Its source is plain HTML, CSS, JavaScript and locally served brand assets in `site/`; no
+frontend framework or runtime dependencies are needed. The homepage shows the workflow
+graph and an illustrative ticket animation. Brand asset sources are listed in
+[`site/brands/README.md`](site/brands/README.md). Preview from the repository root:
 
 ```bash
 python3 -m http.server 8000 --bind 127.0.0.1 --directory site
@@ -359,10 +361,15 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory site
 Open [localhost:8000](http://localhost:8000). Stop the server with Ctrl-C.
 
 To enable hosting, a repository maintainer must choose **Settings → Pages → Build and
-deployment → Source → GitHub Actions**. The `Deploy landing page` workflow uploads only
-`site/` and deploys after changes to the site or workflow land on `main`; pull requests
-do not deploy. If environment protection rules are configured, allow `main` in the
-`github-pages` environment. The first successful workflow run makes the site available.
+deployment → Source → GitHub Actions**. The `Deploy landing page` workflow stamps CSS
+and JavaScript URLs with a content hash using `scripts/version_site_assets.py`, then
+uploads only `site/`. This prevents a new HTML page from loading an older cached
+stylesheet or script.
+
+The workflow deploys after changes to the site, versioning script or workflow land on
+`main`; pull requests do not deploy. If environment protection rules are configured,
+allow `main` in the `github-pages` environment. The first successful workflow run
+makes the site available.
 Keep product copy aligned with the README, setup guide and architecture when behavior changes.
 
 ## License
