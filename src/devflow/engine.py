@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from . import (
     gitops,
     graphctx,
     prompts,
+    stall,
     telemetry,
     worktree,
 )
@@ -121,17 +124,22 @@ class Engine:
             if ticket.state in TERMINAL:
                 return Outcome(ticket, "done", ticket.state.value)
             before = ticket.state
+            history = self._stall_history("stage." + before.value)
+            started = time.monotonic()
             try:
-                with telemetry.span("stage." + ticket.state.value,
-                                    {"devflow.state": ticket.state.value, "langfuse.observation.type": "chain",
-                                     "devflow.implement_attempt": ticket.implement_attempts,
-                                     "devflow.review_round": ticket.review_round}) as stage:
-                    stage.content(input={"issue": issue, "state": ticket.state.value,
-                                         "implementation_attempt": ticket.implement_attempts,
-                                         "review_round": ticket.review_round})
-                    self._handlers[ticket.state](ticket)
-                    stage.content(output={"next_state": ticket.state.value})
-                    stage.set(**{"devflow.next_state": ticket.state.value})
+                try:
+                    with telemetry.span("stage." + ticket.state.value,
+                                        {"devflow.state": ticket.state.value, "langfuse.observation.type": "chain",
+                                         "devflow.implement_attempt": ticket.implement_attempts,
+                                         "devflow.review_round": ticket.review_round}) as stage:
+                        stage.content(input={"issue": issue, "state": ticket.state.value,
+                                             "implementation_attempt": ticket.implement_attempts,
+                                             "review_round": ticket.review_round})
+                        self._handlers[ticket.state](ticket)
+                        stage.content(output={"next_state": ticket.state.value})
+                        stage.set(**{"devflow.next_state": ticket.state.value})
+                finally:
+                    self._stall_check("stage." + before.value, time.monotonic() - started, history)
             except _Wait as wait:
                 return Outcome(ticket, "paused", str(wait))
             except NoAgentAvailable as exc:
@@ -147,6 +155,25 @@ class Engine:
                     return Outcome(ticket, "escalated", reason)
                 return Outcome(ticket, "paused", f"{type(exc).__name__}: {exc} (will retry)")
         return Outcome(ticket, "paused", "step limit reached; run again to continue")
+
+    def _stall_history(self, stage: str):
+        """Prior durations for a stage, read before its own span is written. Never raises."""
+        try:
+            path = telemetry.log_path()
+            if path is None:
+                return None
+            return stall.baseline_durations(stall.read_log_records(path), stage)
+        except Exception:  # noqa: BLE001 - stall check must never alter ticket flow
+            return None
+
+    def _stall_check(self, stage: str, elapsed: float, history) -> None:
+        """Warn and emit stall.detected when a finished stage exceeded its own p99. Never raises."""
+        with suppress(Exception):  # stall check must never alter ticket flow
+            if history is None:
+                return
+            info = stall.check_stall(stage, elapsed, history)
+            if info:
+                telemetry.report_stall(info)
 
     def _record_error(self, ticket: Ticket, exc: Exception) -> int:
         self.store.add_event(ticket.id, "error", {"state": ticket.state.value, "error": str(exc)})

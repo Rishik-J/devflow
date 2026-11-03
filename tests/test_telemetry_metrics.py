@@ -42,7 +42,8 @@ def test_no_argument_output_unchanged(tmp_path, capsys):
     assert json.loads(out.out) == {
         "spans": 7, "synthetic_spans_excluded": 1, "ticket_turn_outcomes": {"done": 1},
         "agent_cli_calls": {"claude": 1}, "coding_cost_usd_recorded": {"claude": 0.5},
-        "stage_latency_seconds": {"stage.plan": {"count": 2, "mean": 3.0, "max": 4.0}}}
+        "stage_latency_seconds": {"stage.plan": {"count": 2, "mean": 3.0, "max": 4.0, "p50": 3.0, "p90": 3.8, "p99": 3.98}},
+        "stage_stalls": {}}
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "abc"])
@@ -112,8 +113,9 @@ def test_stage_and_agent_stats():
                span("agent.claude.coder", 0, 2), span("agent.claude.coder", 0, 4),
                span("agent.codex.reviewer", 0, 1)]
     (s,) = issue_summary(records, 1)
-    assert s["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 3.0, "max": 4.0},
-                                          "stage.build": {"count": 1, "mean": 6.0, "max": 6.0}}
+    assert s["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 3.0, "max": 4.0, "p50": 3.0, "p90": 3.8, "p99": 3.98},
+                                          "stage.build": {"count": 1, "mean": 6.0, "max": 6.0,
+                                                          "p50": 6.0, "p90": 6.0, "p99": 6.0}}
     assert s["agent_latency_seconds"]["claude.coder"] == {"count": 2, "mean": 3.0, "max": 4.0}
     assert s["agent_calls"] == {"claude.coder": 2, "codex.reviewer": 1}
 
@@ -200,7 +202,7 @@ def test_plain_incomplete_objects(tmp_path, capsys):
            {"name": "agent.x", "attributes": [1]}, {"name": "usage.recorded", "attributes": None}]
     data = plain(tmp_path, capsys, bad + [span("stage.plan", 0, 2)])
     assert data["spans"] == 6
-    assert data["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 1.5, "max": 2.0}}
+    assert data["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 1.5, "max": 2.0, "p50": 1.5, "p90": 1.9, "p99": 1.99}}
     assert data["agent_cli_calls"] == {"unknown": 1}
     assert data["ticket_turn_outcomes"] == {"None": 1}
 
@@ -213,7 +215,7 @@ def test_plain_bad_stage_timestamps(tmp_path, capsys):
            '{"name": "stage.plan", "start_ns": 0, "end_ns": 1e309}',
            json.dumps({**base, "start_ns": 3, "end_ns": 3}), json.dumps(span("stage.plan", 0, 4))]
     data = plain(tmp_path, capsys, raw=raw)
-    assert data["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 2.0, "max": 4.0}}
+    assert data["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 2.0, "max": 4.0, "p50": 2.0, "p90": 3.6, "p99": 3.96}}
 
 
 def test_plain_bad_costs(tmp_path, capsys):
@@ -252,3 +254,29 @@ def test_plain_synthetic_with_non_object(tmp_path, capsys):
 def test_aggregate_has_no_strict_mode():
     assert "strict" not in inspect.signature(aggregate).parameters
     assert isinstance(aggregate([1, None, [], {"name": 3}, {"attributes": 5}]), dict)
+
+
+def test_stage_stalls_counts_and_privacy(tmp_path, capsys):
+    records = [span("stage.plan", 0, 2),
+               span("stall.detected", **{"devflow.stage": "stage.plan", "devflow.duration_seconds": 123.456}),
+               span("stall.detected", **{"devflow.stage": "stage.plan"}),
+               span("stall.detected", **{"devflow.stage": 5}), span("stall.detected"),
+               span("stall.detected", **{"devflow.stage": "stage.x", "langfuse.trace.metadata.synthetic": "true"})]
+    _, out = run_metrics(tmp_path, capsys, records)
+    data = json.loads(out.out)
+    assert data["stage_stalls"] == {"stage.plan": 2}
+    assert list(data["stage_latency_seconds"]) == ["stage.plan"]
+    assert "123.456" not in out.out
+    assert aggregate([span("stage.plan")])["stage_stalls"] == {}
+
+
+def test_issue_metrics_percentiles_and_stalls(tmp_path, capsys):
+    records = [span("stage.plan", 0, 2), span("stage.plan", 0, 4), span("agent.claude.coder", 0, 2),
+               span("stall.detected", **{"devflow.stage": "stage.plan"})]
+    _, out = run_metrics(tmp_path, capsys, records, "--issue", "1")
+    data = json.loads(out.out)
+    keys = {"count", "mean", "max", "p50", "p90", "p99"}
+    assert set(data["stage_latency_seconds"]["stage.plan"]) == keys
+    assert set(data["sessions"][0]["stage_latency_seconds"]["stage.plan"]) == keys
+    assert set(data["sessions"][0]["agent_latency_seconds"]["claude.coder"]) == {"count", "mean", "max"}
+    assert data["stage_stalls"] == {"stage.plan": 1}

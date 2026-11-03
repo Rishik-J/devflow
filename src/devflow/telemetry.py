@@ -136,6 +136,24 @@ def event(name: str, **attributes):
         pass
 
 
+def log_path() -> Path | None:
+    """The configured local trace log, or None when telemetry is disabled or has no log file."""
+    if not _settings.get("enabled"):
+        return None
+    path = _settings.get("log_file")
+    return Path(path) if isinstance(path, str | os.PathLike) and path else None
+
+
+def report_stall(info: dict) -> None:
+    """Emit the stall.detected event (not a stage.* name) and one stderr warning line."""
+    event("stall.detected", **{"devflow.stage": info["stage"],
+                               "devflow.duration_seconds": info["elapsed"],
+                               "devflow.threshold_p99_seconds": info["p99"],
+                               "devflow.baseline_samples": info["samples"]})
+    print(f"devflow: stall warning: {info['stage']} took {info['elapsed']}s, over its p99 of "
+          f"{info['p99']}s across {info['samples']} prior runs", file=sys.stderr)
+
+
 def _attribute(key, value):
     kind = "boolValue" if isinstance(value, bool) else "intValue" if isinstance(value, int) else "doubleValue" if isinstance(value, float) else "stringValue"
     return {"key": key, "value": {kind: str(value) if kind == "intValue" else value}}

@@ -961,3 +961,92 @@ def test_a_ticket_with_no_record_of_the_reviewed_commit_cannot_reach_a_merge(env
     out = env.engine().run(1)
     assert out.status == "escalated" and "no record of which commit was reviewed" in out.reason
     assert not env.host.merged
+
+
+# ---------------------------------------------------------------- stall detection
+
+def _seed(log: Path, stage: str, count: int, seconds: float) -> None:
+    rows = [{"name": stage, "status": "ok", "start_ns": 0, "end_ns": int(seconds * 1e9),
+             "attributes": {}} for _ in range(count)]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+@pytest.fixture
+def stall_log(tmp_path):
+    from devflow import telemetry
+    log = tmp_path / "trace.jsonl"
+    telemetry.configure(settings={"log_file": str(log)})
+    yield log
+    telemetry.configure(settings={})
+
+
+def _events(log: Path, name: str) -> list[dict]:
+    return [r for r in map(json.loads, log.read_text().splitlines()) if r["name"] == name]
+
+
+def test_stall_detected_after_slow_stage(tmp_path, stall_log, capsys):
+    env = Env(tmp_path)
+    _seed(stall_log, "stage.new", 5, 0.0)  # p99 of zero: any real stage is slower
+    outcome = env.engine().run(1)
+    assert outcome.status == "paused"
+    (event,) = _events(stall_log, "stall.detected")
+    attrs = event["attributes"]
+    assert attrs["devflow.stage"] == "stage.new"
+    assert attrs["devflow.baseline_samples"] == 5 and attrs["devflow.threshold_p99_seconds"] == 0.0
+    assert attrs["devflow.duration_seconds"] > 0
+    assert capsys.readouterr().err.count("devflow: stall warning:") == 1
+
+
+def test_stall_event_flows_into_metrics(tmp_path, stall_log, capsys):
+    from devflow.telemetry_cli import aggregate
+    env = Env(tmp_path)
+    _seed(stall_log, "stage.new", 5, 0.0)
+    env.engine().run(1)
+    data = aggregate([json.loads(x) for x in stall_log.read_text().splitlines()])
+    assert data["stage_stalls"] == {"stage.new": 1}
+    assert "stall.detected" not in data["stage_latency_seconds"]
+
+
+def test_no_stall_for_fast_stage_or_thin_history(tmp_path, stall_log, capsys):
+    env = Env(tmp_path)
+    _seed(stall_log, "stage.new", 5, 1000.0)
+    env.engine().run(1)
+    assert _events(stall_log, "stall.detected") == []
+    assert "stall warning" not in capsys.readouterr().err
+
+
+def test_no_stall_with_fewer_than_five_samples(tmp_path, stall_log, capsys):
+    env = Env(tmp_path)
+    _seed(stall_log, "stage.new", 4, 0.0)
+    env.engine().run(1)
+    assert _events(stall_log, "stall.detected") == []
+    assert "stall warning" not in capsys.readouterr().err
+
+
+def test_stall_check_noop_without_telemetry(tmp_path, capsys):
+    from devflow import telemetry
+    telemetry.configure(settings={})
+    env = Env(tmp_path)
+    assert env.engine().run(1).status == "paused"
+    assert "stall" not in capsys.readouterr().err
+    assert not list(tmp_path.glob("*.jsonl"))
+
+
+def test_unreadable_or_failing_stall_check_does_not_change_flow(tmp_path, stall_log, monkeypatch):
+    from devflow import stall
+    baseline = Env(tmp_path / "a")
+    expected = baseline.engine().run(1)
+    for broken in ("read_log_records", "check_stall"):
+        env = Env(tmp_path / broken)
+        _seed(stall_log, "stage.new", 5, 0.0)
+        monkeypatch.setattr(stall, broken, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        outcome = env.engine().run(1)
+        monkeypatch.undo()
+        assert (outcome.status, outcome.ticket.state) == (expected.status, expected.ticket.state)
+    env = Env(tmp_path / "dir")
+    stall_log.unlink()
+    stall_log.mkdir()
+    from devflow import telemetry
+    telemetry.configure(settings={"log_file": str(stall_log)})
+    outcome = env.engine().run(1)
+    assert (outcome.status, outcome.ticket.state) == (expected.status, expected.ticket.state)

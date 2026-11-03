@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import telemetry
 from .detect import repo_root
+from .stall import _attrs, _is_number, _is_synthetic, _seconds, percentile
 
 
 def command(args):
@@ -66,6 +67,22 @@ def _stats(values):
     return {"count": len(values), "mean": round(sum(values) / len(values), 3), "max": round(max(values), 3)}
 
 
+def _stage_stats(values):
+    return {**_stats(values), "p50": round(percentile(values, 50), 3),
+            "p90": round(percentile(values, 90), 3), "p99": round(percentile(values, 99), 3)}
+
+
+def _stall_counts(records):
+    counts = Counter()
+    for record in records:
+        if not isinstance(record, dict) or record.get("name") != "stall.detected" or _is_synthetic(record):
+            continue
+        stage = _attrs(record).get("devflow.stage")
+        if isinstance(stage, str):
+            counts[stage] += 1
+    return dict(counts)
+
+
 def aggregate(records):
     """Aggregate metrics over all records, ignoring non-object records and tolerating incomplete ones."""
     durations = defaultdict(list)
@@ -92,43 +109,15 @@ def aggregate(records):
             outcomes[str(attributes.get("devflow.result", record.get("status")))] += 1
     return {"spans": spans, "synthetic_spans_excluded": synthetic, "ticket_turn_outcomes": dict(outcomes),
             "agent_cli_calls": dict(calls), "coding_cost_usd_recorded": dict(usage),
-            "stage_latency_seconds": {name: _stats(values) for name, values in durations.items()}}
-
-
-def _attrs(record):
-    attributes = record.get("attributes")
-    return attributes if isinstance(attributes, dict) else {}
-
-
-def _is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+            "stage_latency_seconds": {name: _stage_stats(values) for name, values in durations.items()},
+            "stage_stalls": _stall_counts(records)}
 
 
 def _cost(value):
     return value if _is_number(value) and math.isfinite(value) else 0
 
 
-def _seconds(record):
-    start, end = record.get("start_ns"), record.get("end_ns")
-    if not (_is_number(start) and _is_number(end)):
-        return None
-    try:
-        start, end = float(start), float(end)
-        seconds = (end - start) / 1e9
-    except OverflowError:
-        return None
-    if not (math.isfinite(start) and math.isfinite(end) and math.isfinite(seconds)) or end < start:
-        return None
-    return seconds
-
-
 _ISSUE_SESSION = re.compile(r"(?:^|:)issue-(\d+)$")
-
-
-def _is_synthetic(record):
-    attributes = _attrs(record)
-    return (attributes.get("langfuse.trace.metadata.synthetic") == "true"
-            or attributes.get("langfuse.session.id") == "devflow-connectivity-demo")
 
 
 def _matches_issue(record, issue):
@@ -187,7 +176,7 @@ def _session_summary(session, records):
         active, elapsed, gap = round(active, 3), round(elapsed, 3), round(gap, 3)
     return {"session": session, "spans": len(records), "runs": runs, "outcomes": dict(outcomes),
             "active_run_seconds": active, "elapsed_wall_seconds": elapsed, "inferred_gap_seconds": gap,
-            "stage_latency_seconds": {n: _stats(v) for n, v in stages.items()},
+            "stage_latency_seconds": {n: _stage_stats(v) for n, v in stages.items()},
             "agent_latency_seconds": {n: _stats(v) for n, v in agents.items()},
             "agent_calls": dict(agent_calls)}
 
@@ -229,5 +218,7 @@ def issue_metrics(records, issue):
             "synthetic_spans_excluded": sum(1 for r in records if isinstance(r, dict) and _is_synthetic(r)),
             "ticket_turn_outcomes": dict(outcomes), "agent_cli_calls": dict(calls),
             "coding_cost_usd_recorded": {},
-            "stage_latency_seconds": {n: _stats(v) for n, v in stages.items()},
+            "stage_latency_seconds": {n: _stage_stats(v) for n, v in stages.items()},
+            "stage_stalls": _stall_counts([r for r in records if isinstance(r, dict) and not _is_synthetic(r)
+                                           and _matches_issue(r, issue)]),
             "labels": LABELS, "sessions": sessions}
