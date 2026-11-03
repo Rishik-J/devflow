@@ -388,3 +388,26 @@ def test_markdown_is_inert():
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
         assert "<img" not in out and 'href="javascript' not in out
         assert 'href="https://e.com/a?b=1&amp;c=2"' in out
+
+
+def test_refresh_without_brief_does_not_call_host(tmp_path: Path):
+    seed(tmp_path).close()
+    calls = []
+
+    class Counting(FakeIssueHost):
+        def get_issue(self, number):
+            calls.append(number)
+            return super().get_issue(number)
+
+    server, port = serve(tmp_path, Counting)
+    try:
+        assert get(port, "/api/ticket/38")[2]["brief"]["available"] is True
+        assert len(calls) == 1
+        for _ in range(2):
+            code, _, data = get(port, "/api/ticket/38?brief=0")
+            assert code == 200 and data["brief"]["skipped"] is True
+        assert len(calls) == 1
+        assert "?brief=0" in HTML_TEMPLATE
+    finally:
+        server.shutdown()
+        server.server_close()

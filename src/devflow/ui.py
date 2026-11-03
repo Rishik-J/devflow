@@ -579,12 +579,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     async function loadTicket(n, isRefresh) {
       try {
-        const res = await fetch('/api/ticket/' + encodeURIComponent(n), { cache: 'no-store' });
+        const res = await fetch('/api/ticket/' + encodeURIComponent(n) + (isRefresh ? '?brief=0' : ''), { cache: 'no-store' });
         if (n !== openIssue) return;
         let data;
         if (res.status === 404 || res.status === 400) data = { notFound: true };
         else if (!res.ok) return;
         else data = await res.json();
+        // The issue body is fetched once per open; refreshes keep the one already loaded.
+        if (isRefresh && ticketData && ticketData.brief && data.brief && data.brief.skipped) data.brief = ticketData.brief;
         const json = JSON.stringify(data);
         if (isRefresh && json === ticketJson) return;
         ticketJson = json;
@@ -886,7 +888,8 @@ def _fetch_brief(slug: str, issue: int, host_factory) -> dict[str, Any]:
     return {"body": body, "available": True} if isinstance(body, str) else unavailable
 
 
-def collect_ticket(root: Path, issue: int, *, host_factory=None) -> dict[str, Any] | None:
+def collect_ticket(root: Path, issue: int, *, host_factory=None,
+                   with_brief: bool = True) -> dict[str, Any] | None:
     """Everything the inspector drawer shows for one ticket, or None when unknown."""
     db = state_db_path(root)
     if not db.exists():
@@ -917,7 +920,8 @@ def collect_ticket(root: Path, issue: int, *, host_factory=None) -> dict[str, An
         "urls": {"issue": f"{base}/issues/{issue}",
                  "pr": f"{base}/pull/{pr}" if pr else None},
         "history": history,
-        "brief": _fetch_brief(slug, issue, host_factory or _default_host_factory),
+        "brief": (_fetch_brief(slug, issue, host_factory or _default_host_factory) if with_brief
+                  else {"body": None, "available": False, "skipped": True}),
         "plan": _plan_section(payload["plan"], payload["test_plan"]),
         "blast_radius": _blast_section(gates_latest.get("impact")
                                        or _dict(payload["review"]).get("impact"),
@@ -943,12 +947,13 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _ticket(self, raw: str) -> None:
+    def _ticket(self, raw: str, with_brief: bool = True) -> None:
         if not raw.isascii() or not raw.isdigit() or int(raw) <= 0:
             self._json(400, {"error": "ticket id must be a positive integer"})
             return
         try:
-            data = collect_ticket(self.root, int(raw), host_factory=self.host_factory)
+            data = collect_ticket(self.root, int(raw), host_factory=self.host_factory,
+                                  with_brief=with_brief)
         except Exception as exc:  # noqa: BLE001
             self._json(500, {"error": str(exc)})
             return
@@ -958,9 +963,11 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             self._json(200, data)
 
     def do_GET(self) -> None:
-        path = urllib.parse.urlsplit(self.path).path
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path
         if path.startswith("/api/ticket/") and len(path) > len("/api/ticket/"):
-            self._ticket(path[len("/api/ticket/"):])
+            query = urllib.parse.parse_qs(parts.query)
+            self._ticket(path[len("/api/ticket/"):], query.get("brief") != ["0"])
             return
         if self.path == "/api/state":
             try:
