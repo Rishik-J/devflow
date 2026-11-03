@@ -371,17 +371,20 @@ def test_template_markers():
         assert external not in t
 
 
-def test_markdown_is_inert_in_node():
+def test_markdown_is_inert():
+    # Static guarantees: escape first, http(s)-only links.
+    body = HTML_TEMPLATE[HTML_TEMPLATE.index("function renderMarkdown"):HTML_TEMPLATE.index("function chip(")]
+    assert "escapeHtml(src" in body.split("for (const line")[0]
+    assert "https?:" in HTML_TEMPLATE[HTML_TEMPLATE.index("function safeUrl"):HTML_TEMPLATE.index("function inlineMd")]
     node = shutil.which("node")
-    if not node:
-        pytest.skip("node not installed")
-    start = HTML_TEMPLATE.index("function safeUrl")
-    end = HTML_TEMPLATE.index("function chip(")
-    esc_start = HTML_TEMPLATE.index("function escapeHtml")
-    esc = HTML_TEMPLATE[esc_start:HTML_TEMPLATE.index("}\n", esc_start) + 2]
-    script = esc + HTML_TEMPLATE[start:end] + (
-        "console.log(renderMarkdown('[x](javascript:alert(1)) <img src=x onerror=alert(1)> "
-        "[ok](https://e.com/a?b=1&c=2)'));")
-    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
-    assert "<img" not in out and "href=\"javascript" not in out
-    assert 'href="https://e.com/a?b=1&amp;c=2"' in out
+    if node:  # dynamic check only where Node is available
+        start = HTML_TEMPLATE.index("function safeUrl")
+        end = HTML_TEMPLATE.index("function chip(")
+        esc_start = HTML_TEMPLATE.index("function escapeHtml")
+        esc = HTML_TEMPLATE[esc_start:HTML_TEMPLATE.index("}\n", esc_start) + 2]
+        script = esc + HTML_TEMPLATE[start:end] + (
+            "console.log(renderMarkdown('[x](javascript:alert(1)) <img src=x onerror=alert(1)> "
+            "[ok](https://e.com/a?b=1&c=2)'));")
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
+        assert "<img" not in out and 'href="javascript' not in out
+        assert 'href="https://e.com/a?b=1&amp;c=2"' in out
