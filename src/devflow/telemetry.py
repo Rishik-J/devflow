@@ -278,6 +278,12 @@ def _valid(key: str, value):
         return value if value in ("injected", "unavailable") else None
     if key == "slice_count":
         return value if _count(value) else None
+    if key == "blast_status":
+        return value if value in ("injected", "unavailable") else None
+    if key == "blast_tests":
+        if isinstance(value, list) and all(isinstance(v, str) for v in value):
+            return ",".join(v[:200] for v in value[:50])
+        return None
     if key == "refreshed":
         return value if isinstance(value, bool) else None
     if key == "remote":
@@ -302,7 +308,10 @@ def annotate(**attrs) -> None:
 _TRACE_KEYS = {"base_sha": "base_sha", "remote": "remote", "graph_status": "status",
                "graph_fingerprint": "fingerprint", "graph_nodes": "nodes", "graph_edges": "edges",
                "graph_staleness": "staleness", "slice_status": "slice_status",
-               "slice_seeds": "slice_count", "slice_nodes": "slice_count"}
+               "slice_seeds": "slice_count", "slice_nodes": "slice_count",
+               "blast_status": "blast_status", "blast_nodes": "slice_count",
+               "blast_edges": "slice_count", "blast_callers_total": "slice_count",
+               "blast_callers_verified": "slice_count", "impacted_tests": "blast_tests"}
 
 
 def trace_metadata(**values) -> None:

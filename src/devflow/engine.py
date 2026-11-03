@@ -58,6 +58,10 @@ class _Wait(telemetry.WaitSignal):
     """Stop here; nothing more can happen until a person acts or time passes."""
 
 
+class GraphUnavailableError(RuntimeError):
+    pass
+
+
 class _Escalate(Exception):
     """Stop here and hand the ticket to a person."""
 
@@ -314,6 +318,23 @@ class Engine:
                                  slice_nodes=result.nodes)
         return f"\n\n{prompts.SLICE_HEADER}\n{result.text}\n\n{prompts.SLICE_GUIDANCE}"
 
+    def _blast_radius(self, wt: Path, base_sha: str, impact) -> str | None:
+        """The reviewer checklist text, recording blast trace metadata; None when unavailable."""
+        try:
+            if impact is None:
+                raise GraphUnavailableError
+            names = gitops.diff_names(wt, base_sha)
+            res = graphctx.reviewer_checklist(impact, names)
+            telemetry.trace_metadata(
+                blast_status="injected", blast_nodes=impact.node_count,
+                blast_edges=impact.edge_count, blast_callers_total=res.callers_total,
+                blast_callers_verified=res.callers_verified,
+                impacted_tests=graphctx.impacted_tests(impact, names))
+            return res.text
+        except Exception:  # noqa: BLE001 - never stop a ticket
+            telemetry.trace_metadata(blast_status="unavailable")
+            return None
+
     def _check_graph_staleness(self, wt: Path) -> None:
         """Warn (never block) when the graph is stale or unbuilt as planning begins."""
         with suppress(Exception):  # best effort; never stop a ticket
@@ -542,15 +563,31 @@ class Engine:
 
     # ------------------------------------------------------------------ GATES
 
-    def _verify(self, path: Path, base_sha: str) -> tuple[baseline.Verdict, list[diffguard.Finding], GateReport]:
+    def _impact(self, path: Path, base_sha: str):
+        """Best-effort impact report for the diff in `path`, or None. Never raises."""
+        with suppress(Exception):
+            self._refresh_graph(path)
+            return graphctx.impact(path, gitops.diff_names(path, base_sha))
+        return None
+
+    def _verify(self, path: Path, base_sha: str, impact=None
+                ) -> tuple[baseline.Verdict, list[diffguard.Finding], GateReport]:
         """Gate results against the base, plus the diff guard, in `path`."""
         setup = setup_worktree(self.cfg, path)
         if not setup.ok and setup.results:
             return (baseline.Verdict(ok=False, new_failures=[baseline.NewFailure(
                 setup.results[-1].project, "setup", setup.results[-1].command, ["setup failed"],
                 setup.results[-1].output_tail)]), [], setup)
-        report = run_gates(self.cfg, path)
         base = baseline.ensure_baseline(self.cfg, self.store, base_sha)
+        tests: list[str] = []
+        check = None
+        if impact is not None:
+            with suppress(Exception):
+                tests = graphctx.impacted_tests(impact, gitops.diff_names(path, base_sha))
+
+                def check(result):
+                    return not baseline.evaluate(GateReport([result]), base).ok
+        report = run_gates(self.cfg, path, impacted_tests=tests or None, priority_check=check)
         verdict = baseline.evaluate(report, base)
         return verdict, diffguard.analyze(path, base_sha), report
 
@@ -580,7 +617,7 @@ class Engine:
                 ".", "changes", "git diff", ["no changes were made"], "")])
             findings: list[diffguard.Finding] = []
         else:
-            verdict, findings, _ = self._verify(wt, t.base_sha)
+            verdict, findings, _ = self._verify(wt, t.base_sha, self._impact(wt, t.base_sha))
         ok = verdict.ok and not diffguard.blocking(findings)
         self._put(t, "gates", {
             "ok": ok, "summary": verdict.summary(), "unconfigured": verdict.unconfigured,
@@ -657,14 +694,16 @@ class Engine:
         head = gitops.head_sha(wt)
         review_wt = worktree.create_detached(
             self.cfg.root, self.cfg.worktree_root / f"{t.branch.split('/', 1)[-1]}-review", head)
-        verdict, findings, _ = self._verify(review_wt, t.base_sha)
+        impact = self._impact(review_wt, t.base_sha)
+        verdict, findings, _ = self._verify(review_wt, t.base_sha, impact)
+        blast = self._blast_radius(review_wt, t.base_sha, impact)
         facts = verdict.summary() + (f"\nNot configured: {', '.join(verdict.unconfigured)}"
                                      if verdict.unconfigured else "")
         stat = gitops.diff_stat(review_wt, t.base_sha)
         diff = gitops.git(review_wt, "diff", f"{t.base_sha}...HEAD", timeout=120)
         req = self._request(t, "reviewer",
                             prompts.reviewer_task(plan, self._latest(t, "test_plan") or {}, facts,
-                                                  stat, t.base_sha, diff),
+                                                  stat, t.base_sha, diff, blast_radius=blast),
                             schema="review", read_only=True, cwd=review_wt,
                             files=gitops.diff_names(review_wt, t.base_sha))
         if "reviewer" in self.agents:

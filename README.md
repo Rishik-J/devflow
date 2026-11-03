@@ -384,3 +384,11 @@ Keep product copy aligned with the README, setup guide and architecture when beh
 ## License
 
 [MIT](LICENSE) © 2026 Rishik J.
+
+### Reviewer blast-radius checklist and impacted-first gates
+
+Before each review the engine computes the PR diff's impact report from the code graph and injects a bounded, deterministic **BLAST RADIUS** checklist into the reviewer prompt only (not the planner or coder). It has one checkbox per external contract, hop-1 caller outside the diff, dependent module outside the diff, and defined symbol with no covering test. The reviewer is told it is graph-derived data and must tick or reject each item, raising a blocking finding for a broken caller contract. If the graph is missing or `impact` fails, review runs without the block and the trace records `blast_status=unavailable`; a graph failure never stops a ticket.
+
+When the graph is available, gate execution runs the tests that cover the impacted symbols (plus modified test files) before the wider suite. This applies to bare `pytest ...` / `python -m pytest ...` commands without path arguments: the command first runs with the impacted test files appended, then the full command runs as before. The wider run is skipped only when the priority pass fails with failure fingerprints that are new against the base; either way the result is recorded under the original command, so baseline matching is unchanged. Other runners are unchanged.
+
+Trace metadata on the ticket root: `blast_status` (`injected` or `unavailable`), `blast_nodes` (symbols + callers + dependent modules), `blast_edges` (one per caller), `blast_callers_total`, `blast_callers_verified` and `impacted_tests`. A caller is *verified* when its file is in the diff or is a test file, and *unverified* otherwise. A `gate.order` event records `impacted_tests`, `priority_ran`, `priority_ok` and `short_circuited`.
