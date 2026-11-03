@@ -1,75 +1,151 @@
-const stages = [
-  { status: 'Planning', actor: 'OpenClaw · planner', title: 'A plan before code', text: 'The issue becomes a concrete implementation and test plan. A configured approver reviews it before work begins.', evidence: 'Artifact: issue plan' },
-  { status: 'Building', actor: 'Coding agent · worktree', title: 'Changes in isolation', text: 'A coding agent writes tests and implementation in a separate git worktree, with the issue and repository context in hand.', evidence: 'Artifact: code + tests' },
-  { status: 'Verifying', actor: 'Devflow · test gates', title: 'Run the real checks', text: 'Configured test gates run in a separate checkout. Failures are recorded as evidence and sent back for repair.', evidence: 'Artifact: gate results' },
-  { status: 'Reviewing', actor: 'Review agent · diff', title: 'An independent pass', text: 'A reviewer examines the diff and test evidence. Findings return to the coder for another pass.', evidence: 'Artifact: review findings' },
-  { status: 'Ready to merge', actor: 'Devflow · merge gate', title: 'The reviewed commit', text: 'After PR approval and CI checks, Devflow merges the exact commit that passed review and records what the run taught it.', evidence: 'Artifact: verified PR' }
-];
 const traceStages = [
-  { phase: 'PLAN / 01', title: 'stage.refining', description: 'OpenClaw turns the issue into a plan with acceptance criteria. The engine records the handoff and waits for plan approval when that gate is enabled.', component: 'OpenClaw planner', child: 'agent.<driver>.planner', artifact: 'Plan, questions, approval state', note: 'The supplied prompt and final response are visible only when content capture is enabled.' },
-  { phase: 'BUILD / 02', title: 'stage.implementing', description: 'A coding agent writes tests and code in an isolated worktree. Agent routing and exposed CLI activity are attached to this work.', component: 'Claude Code, Codex, or Cursor', child: 'routing.selected', artifact: 'Test design, code changes, agent response', note: 'Exposed tool calls and final responses can be captured; hidden provider requests are not available.' },
-  { phase: 'VERIFY / 03', title: 'stage.gates', description: 'Devflow runs the configured checks in a separate checkout and records each gate outcome before a review can pass.', component: 'Devflow test engine', child: 'gate.result', artifact: 'Gate type, exit status, output', note: 'Gate commands and output require opt-in content capture. The gate outcome is available in metadata mode.' },
-  { phase: 'REVIEW / 04', title: 'stage.in_review', description: 'A reviewer checks the diff and test evidence. Blocking findings return to the coding agent for another pass.', component: 'Review agent + Devflow engine', child: 'agent.<driver>.reviewer', artifact: 'Review verdict, findings, reviewed SHA', note: 'A review loop can repeat build, gates, and review spans within the ticket session.' },
-  { phase: 'MERGE / 05', title: 'stage.awaiting_merge_approval', description: 'The engine checks PR approval, CI, and the remote head before merging the exact commit the reviewer approved.', component: 'GitHub PR + Devflow merge gate', child: 'tool.github', artifact: 'CI result, reviewed SHA, merge result', note: 'When the approval gate is on, this stage waits for an authorized PR comment.' }
+  {
+    phase: "PLAN / 01",
+    name: "stage.refining",
+    description:
+      "OpenClaw turns the issue into a plan with acceptance criteria. The engine records the handoff and waits for approval when that gate is enabled.",
+    component: "OpenClaw planner",
+    child: "agent.<driver>.planner",
+    evidence: "Plan, questions, approval state",
+    note: "Supplied prompts and final responses require opt-in content capture.",
+  },
+  {
+    phase: "BUILD / 02",
+    name: "stage.implementing",
+    description:
+      "A coding CLI writes tests and code in an isolated worktree. Agent routing and exposed CLI activity are attached to this stage.",
+    component: "Claude Code, Codex, or Cursor",
+    child: "routing.selected",
+    evidence: "Test design, code changes, agent response",
+    note: "Exposed tool calls can be captured; hidden provider requests are not available.",
+  },
+  {
+    phase: "VERIFY / 03",
+    name: "stage.gates",
+    description:
+      "Devflow runs configured checks in a separate checkout and records each gate result before review can pass.",
+    component: "Devflow test engine",
+    child: "gate.result",
+    evidence: "Gate type, exit status, output",
+    note: "Gate outcomes appear in metadata mode. Commands and output require opt-in content capture.",
+  },
+  {
+    phase: "REVIEW / 04",
+    name: "stage.in_review",
+    description:
+      "A reviewer checks the diff and test evidence. Blocking findings return the ticket to the coding agent.",
+    component: "Reviewer + Devflow engine",
+    child: "agent.<driver>.reviewer",
+    evidence: "Verdict, findings, reviewed SHA",
+    note: "A review round can repeat build, gates, and review within the ticket session.",
+  },
+  {
+    phase: "MERGE / 05",
+    name: "stage.awaiting_merge_approval",
+    description:
+      "The engine checks PR approval, CI, and the remote head before merging the exact reviewed commit.",
+    component: "GitHub PR + Devflow merge gate",
+    child: "tool.github",
+    evidence: "CI result, reviewed SHA, merge result",
+    note: "With the approval gate on, this stage waits for an authorized PR comment.",
+  },
 ];
-const buttons = [...document.querySelectorAll('[data-step]')];
-const flowButtons = [...document.querySelectorAll('[data-flow-step]')];
-const traceButtons = [...document.querySelectorAll('[data-trace-step]')];
+const graphNodes = [...document.querySelectorAll("[data-graph-step]")];
+const stageButtons = [...document.querySelectorAll("[data-stage]")];
+const traceButtons = [...document.querySelectorAll("[data-trace-step]")];
+const panels = [...document.querySelectorAll("[data-panel]")];
+const edges = [...document.querySelectorAll("[data-edge]")];
+const playControl = document.querySelector("#play-control");
+const meter = document.querySelector("#stage-meter-fill");
+const inspector = document.querySelector(".trace-inspector");
+const stageViewport = document.querySelector(".stage-viewport");
 const traceOutput = {
-  phase: document.querySelector('#trace-phase'), title: document.querySelector('#trace-title'),
-  description: document.querySelector('#trace-description'), component: document.querySelector('#trace-component'),
-  child: document.querySelector('#trace-child'), artifact: document.querySelector('#trace-artifact'),
-  note: document.querySelector('#trace-note')
+  phase: document.querySelector("#trace-phase"),
+  name: document.querySelector("#trace-name"),
+  description: document.querySelector("#trace-description"),
+  component: document.querySelector("#trace-component"),
+  child: document.querySelector("#trace-child"),
+  evidence: document.querySelector("#trace-evidence"),
+  note: document.querySelector("#trace-note"),
 };
-const inspector = document.querySelector('.trace-inspector');
-const output = {
-  status: document.querySelector('#demo-status'), actor: document.querySelector('#demo-actor'),
-  title: document.querySelector('#demo-title'), text: document.querySelector('#demo-text'),
-  evidence: document.querySelector('#demo-evidence'), icon: document.querySelector('#demo-icon')
-};
-const toggle = document.querySelector('#demo-toggle');
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 let current = 0;
-let timer;
 let playing = !reducedMotion.matches;
+let timer;
 function render(index) {
   current = index;
-  const stage = stages[index];
-  for (const [key, element] of Object.entries(output)) element.textContent = key === 'icon' ? String(index + 1).padStart(2, '0') : stage[key];
-  buttons.forEach((button, position) => {
-    if (position === index) button.setAttribute('aria-current', 'step');
-    else button.removeAttribute('aria-current');
+  graphNodes.forEach((node, position) =>
+    position === index
+      ? node.setAttribute("aria-current", "step")
+      : node.removeAttribute("aria-current"),
+  );
+  stageButtons.forEach((button, position) =>
+    position === index
+      ? button.setAttribute("aria-current", "step")
+      : button.removeAttribute("aria-current"),
+  );
+  traceButtons.forEach((button, position) =>
+    position === index
+      ? button.setAttribute("aria-current", "true")
+      : button.removeAttribute("aria-current"),
+  );
+  panels.forEach((panel, position) => {
+    panel.hidden = position !== index;
   });
-  flowButtons.forEach((button, position) => {
-    if (position === index) button.setAttribute('aria-current', 'step');
-    else button.removeAttribute('aria-current');
-  });
-  traceButtons.forEach((button, position) => {
-    if (position === index) button.setAttribute('aria-current', 'true');
-    else button.removeAttribute('aria-current');
-  });
-  for (const [key, element] of Object.entries(traceOutput)) element.textContent = traceStages[index][key];
-  inspector.classList.remove('trace-enter');
+  edges.forEach((edge, position) =>
+    edge.classList.toggle(
+      "is-active",
+      position === Math.min(index, edges.length - 1),
+    ),
+  );
+  meter.style.width = `${(index + 1) * 20}%`;
+  for (const [key, element] of Object.entries(traceOutput))
+    element.textContent = traceStages[index][key];
+  inspector.classList.remove("trace-enter");
   void inspector.offsetWidth;
-  inspector.classList.add('trace-enter');
+  inspector.classList.add("trace-enter");
 }
-function stop() { clearInterval(timer); timer = undefined; }
-function syncToggle() {
-  toggle.innerHTML = playing ? 'Pause <span aria-hidden="true">Ⅱ</span>' : 'Play <span aria-hidden="true">▷</span>';
-  toggle.setAttribute('aria-label', playing ? 'Pause walkthrough' : 'Play walkthrough');
+function stop() {
+  clearInterval(timer);
+  timer = undefined;
+}
+function syncControl() {
+  playControl.textContent = playing ? "Pause Ⅱ" : "Play ▷";
+  playControl.setAttribute(
+    "aria-label",
+    playing ? "Pause stage animation" : "Play stage animation",
+  );
 }
 function start() {
   stop();
-  if (playing && !document.hidden) timer = setInterval(() => render((current + 1) % stages.length), 3500);
-  syncToggle();
+  if (playing && !document.hidden)
+    timer = setInterval(() => render((current + 1) % panels.length), 4200);
+  syncControl();
+  stageViewport.setAttribute("aria-live", playing ? "off" : "polite");
+  document.body.classList.toggle("is-paused", !playing);
 }
-[...buttons, ...flowButtons, ...traceButtons].forEach(button => button.addEventListener('click', () => {
-  render(Number(button.dataset.step ?? button.dataset.flowStep ?? button.dataset.traceStep));
+for (const button of [...graphNodes, ...stageButtons, ...traceButtons]) {
+  button.addEventListener("click", () => {
+    stageViewport.setAttribute("aria-live", "polite");
+    render(
+      Number(
+        button.dataset.graphStep ??
+          button.dataset.stage ??
+          button.dataset.traceStep,
+      ),
+    );
+    playing = false;
+    start();
+  });
+}
+playControl.addEventListener("click", () => {
+  playing = !playing;
+  start();
+});
+document.addEventListener("visibilitychange", start);
+reducedMotion.addEventListener("change", () => {
   playing = false;
-  stop();
-  syncToggle();
-}));
-toggle.addEventListener('click', () => { playing = !playing; start(); });
-document.addEventListener('visibilitychange', start);
-reducedMotion.addEventListener('change', () => { playing = false; stop(); syncToggle(); });
+  start();
+});
+render(0);
 start();

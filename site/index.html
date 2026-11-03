@@ -1,100 +1,797 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#111413">
-  <title>Devflow — Make AI-built software easier to trust</title>
-  <meta name="description" content="Devflow takes a GitHub issue through planning, coding, tests, review, and a verified merge. Open source workflow orchestration for anyone building with AI.">
-  <link rel="canonical" href="https://rishik-j.github.io/devflow/">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="Devflow — Make AI-built software easier to trust">
-  <meta property="og:description" content="One issue, one plan, a tested change, an independent review, and a verified merge.">
-  <meta property="og:url" content="https://rishik-j.github.io/devflow/">
-  <meta name="twitter:card" content="summary">
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
-</head>
-<body>
-  <a class="skip" href="#main">Skip to content</a>
-  <div class="dark">
-    <header class="site-header shell">
-      <a class="brand" href="./" aria-label="Devflow home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>devflow</a>
-      <nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#inside-the-run">Inside a run</a><a href="#setup">Get started</a><a class="nav-github" href="https://github.com/Rishik-J/devflow">GitHub <span aria-hidden="true">↗</span></a></nav>
-    </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101512" />
+    <title>Devflow — Build with AI. Ship with proof.</title>
+    <meta
+      name="description"
+      content="Devflow connects your GitHub issues, OpenClaw, coding agents, test gates, review, and merge in one inspectable workflow. Open source for anyone building with AI."
+    />
+    <link rel="canonical" href="https://rishik-j.github.io/devflow/" />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="Devflow — Build with AI. Ship with proof."
+    />
+    <meta
+      property="og:description"
+      content="One connected workflow from issue to reviewed merge, with a graph of the handoffs and a trace of the work."
+    />
+    <meta property="og:url" content="https://rishik-j.github.io/devflow/" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="stylesheet" href="styles.css?v=__ASSET_VERSION__" />
+    <script src="app.js?v=__ASSET_VERSION__" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <div class="hero-shell">
+      <header class="site-header shell">
+        <a class="brand" href="./" aria-label="Devflow home"
+          ><span class="brand-mark" aria-hidden="true"
+            ><i></i><i></i><i></i></span
+          >devflow</a
+        >
+        <nav aria-label="Main navigation">
+          <a href="#workflow">Workflow</a><a href="#trace">Trace</a
+          ><a href="#setup">Setup</a
+          ><a class="nav-github" href="https://github.com/Rishik-J/devflow"
+            >GitHub <span aria-hidden="true">↗</span></a
+          >
+        </nav>
+      </header>
+    </div>
     <main id="main">
-      <section class="hero shell" aria-labelledby="hero-title">
-        <div class="hero-copy">
-          <h1 id="hero-title">AI can write the code.<br><span>Devflow handles the workflow.</span></h1>
-          <p>Take a GitHub issue from idea to reviewed pull request. Devflow coordinates the plan, coding agents, tests, review, and merge—with a record of what happened at every step.</p>
-          <div class="hero-actions"><a class="button button-white" href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Get started <span aria-hidden="true">↗</span></a><a class="button-link" href="#demo">See the workflow <span aria-hidden="true">↓</span></a></div>
-          <p class="hero-note">Open source · MIT · Early-stage v0.1.0</p>
-        </div>
-        <div class="demo" id="demo" aria-label="Illustrative Devflow ticket walkthrough">
-          <div class="demo-top"><span class="demo-identity"><span class="live-dot" aria-hidden="true"></span> Engineering queue</span><span>Illustrative ticket</span></div>
-          <div class="demo-heading"><span class="ticket-number">#12</span><h2>Add a health endpoint</h2><span class="demo-status" id="demo-status">Planning</span></div>
-          <div class="demo-progress" aria-label="Workflow stages">
-            <button type="button" data-step="0" aria-current="step"><span class="step-line" aria-hidden="true"></span>Plan</button>
-            <button type="button" data-step="1"><span class="step-line" aria-hidden="true"></span>Build</button>
-            <button type="button" data-step="2"><span class="step-line" aria-hidden="true"></span>Verify</button>
-            <button type="button" data-step="3"><span class="step-line" aria-hidden="true"></span>Review</button>
-            <button type="button" data-step="4"><span class="step-line" aria-hidden="true"></span>Merge</button>
-          </div>
-          <div class="demo-body" aria-live="polite" aria-atomic="true">
-            <div class="demo-icon" id="demo-icon" aria-hidden="true">01</div>
-            <div><p class="demo-actor" id="demo-actor">OpenClaw · planner</p><h3 id="demo-title">A plan before code</h3><p id="demo-text">The issue becomes a concrete implementation and test plan. A configured approver reviews it before work begins.</p></div>
-          </div>
-          <div class="demo-bottom"><span id="demo-evidence">Artifact: issue plan</span><button type="button" class="demo-toggle" id="demo-toggle" aria-label="Pause walkthrough">Pause <span aria-hidden="true">Ⅱ</span></button></div>
-        </div>
-        <p class="demo-caption">Select a stage to explore the loop. The ticket shown here is illustrative.</p>
-      </section>
-  </div>
-      <section class="section shell intro" id="how-it-works" aria-labelledby="how-title">
-        <div class="section-lead"><h2 id="how-title">A ticket loop you can inspect.</h2><p>Agents make decisions. Devflow keeps the work moving through explicit checks, records the evidence, and stops when a gate needs attention.</p></div>
-        <div class="process-list">
-          <div class="process-row"><span>01</span><h3>Plan the change</h3><p>OpenClaw refines the issue into a plan. Approval is required by default before coding starts.</p></div>
-          <div class="process-row"><span>02</span><h3>Build and test</h3><p>Claude Code, Codex, or Cursor works in an isolated git worktree. Devflow runs configured checks in a separate checkout.</p></div>
-          <div class="process-row"><span>03</span><h3>Review the result</h3><p>A reviewer checks the diff and test evidence. Findings go back to the coder until the review passes or the loop reaches its limit.</p></div>
-          <div class="process-row"><span>04</span><h3>Merge with confidence</h3><p>Devflow checks CI and merges the exact commit that passed review. PR approval is required by default.</p></div>
-        </div>
-      </section>
-      <section class="section section-tint run-section" id="inside-the-run" aria-labelledby="run-title">
-        <div class="shell">
-          <div class="run-intro"><div><h2 id="run-title">See the whole system move.</h2><p>One issue passes between a planner, coding agent, test engine, reviewer, and GitHub. Select a component to follow its work and the trace it leaves behind.</p></div><p class="run-key">The example below shows the workflow and span names Devflow emits. Ticket #12 and its content are illustrative.</p></div>
-          <div class="flow-board" aria-label="Components of the Devflow ticket workflow">
-            <div class="flow-inputs"><span><span class="flow-input-dot"></span> GitHub Project <small>issue + queue</small></span><span><span class="flow-input-dot"></span> Graphify <small>local code context</small></span></div>
-            <div class="flow-chain">
-              <button class="flow-node" type="button" data-flow-step="0" aria-current="step"><span class="flow-node-num">01</span><strong>OpenClaw</strong><small>Plan + clarify</small></button>
-              <button class="flow-node" type="button" data-flow-step="1"><span class="flow-node-num">02</span><strong>Coding agent</strong><small>Tests + code</small></button>
-              <button class="flow-node" type="button" data-flow-step="2"><span class="flow-node-num">03</span><strong>Devflow engine</strong><small>Clean test gates</small></button>
-              <button class="flow-node" type="button" data-flow-step="3"><span class="flow-node-num">04</span><strong>Reviewer</strong><small>Diff + evidence</small></button>
-              <button class="flow-node" type="button" data-flow-step="4"><span class="flow-node-num">05</span><strong>GitHub PR</strong><small>CI + exact SHA</small></button>
+      <div class="hero-shell">
+        <section class="hero shell" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <h1 id="hero-title">
+              Build with AI.<br /><span>Ship with proof.</span>
+            </h1>
+            <p>
+              Devflow connects the agents, code graph, tests, review, and GitHub
+              into one workflow you can inspect—from the first issue to the
+              commit that ships.
+            </p>
+            <div class="hero-actions">
+              <a
+                class="button button-light"
+                href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md"
+                >Get started <span aria-hidden="true">↗</span></a
+              ><a class="text-action" href="#workflow"
+                >Watch a ticket move <span aria-hidden="true">↓</span></a
+              >
             </div>
-            <div class="flow-output"><span class="flow-loop">Review findings return to the coding agent <span aria-hidden="true">↶</span></span><span class="flow-capture"><span class="flow-input-dot"></span> Langfuse <small>optional local trace</small></span></div>
+            <p class="hero-meta">Open source · MIT · v0.1.0</p>
           </div>
-          <div class="trace-explorer" aria-label="Illustrative Langfuse trace explorer">
-            <div class="trace-header"><div><span class="trace-live" aria-hidden="true"></span><strong>ticket.run</strong><span class="trace-session">session · devflow:issue-12</span></div><span class="trace-tag">Illustrative trace</span></div>
-            <div class="trace-layout">
-              <div class="trace-tree" aria-label="Trace spans"><p class="trace-tree-title">OBSERVATIONS</p>
-                <button type="button" data-trace-step="0" aria-current="true"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.refining</strong><small>OpenClaw · plan + approval</small></span><i aria-hidden="true"></i></button>
-                <button type="button" data-trace-step="1"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.implementing</strong><small>Coding CLI · isolated worktree</small></span><i aria-hidden="true"></i></button>
-                <button type="button" data-trace-step="2"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.gates</strong><small>Devflow · clean checkout</small></span><i aria-hidden="true"></i></button>
-                <button type="button" data-trace-step="3"><span class="trace-branch" aria-hidden="true">├─</span><span><strong>stage.in_review</strong><small>Reviewer · diff + gates</small></span><i aria-hidden="true"></i></button>
-                <button type="button" data-trace-step="4"><span class="trace-branch" aria-hidden="true">└─</span><span><strong>stage.awaiting_merge_approval</strong><small>GitHub · checks + reviewed SHA</small></span><i aria-hidden="true"></i></button>
-                <div class="trace-extra"><span>Related observations</span><code>graph.refresh</code><code>routing.selected</code><code>gate.result</code><code>tool.github</code></div>
+          <div
+            class="graph-card"
+            aria-label="Devflow workflow graph showing connected systems, stages, tracing, and review feedback"
+          >
+            <div class="graph-header">
+              <div>
+                <span class="graph-pulse" aria-hidden="true"></span
+                ><strong>Devflow workflow</strong
+                ><span class="graph-subtitle">Issue → reviewed merge</span>
               </div>
-              <div class="trace-inspector"><div class="trace-inspector-head"><span id="trace-phase">PLAN / 01</span><span class="trace-inspector-type">CHAIN</span></div><h3 id="trace-title">stage.refining</h3><p id="trace-description">OpenClaw turns the issue into a plan with acceptance criteria. The engine records the handoff and waits for plan approval when that gate is enabled.</p><dl class="trace-facts"><div><dt>Component</dt><dd id="trace-component">OpenClaw planner</dd></div><div><dt>Child observation</dt><dd><code id="trace-child">agent.&lt;driver&gt;.planner</code></dd></div><div><dt>Evidence</dt><dd id="trace-artifact">Plan, questions, approval state</dd></div></dl><div class="trace-note"><span aria-hidden="true">↳</span><p id="trace-note">The supplied prompt and final response are visible only when content capture is enabled.</p></div></div>
+              <span class="graph-label">SYSTEM MAP / 01</span>
             </div>
-            <div class="trace-footer"><span>Actual span names · example issue and artifacts</span><span>Each resume starts a new trace in the same ticket session.</span></div>
+            <div class="graph-canvas">
+              <svg
+                class="graph-edges"
+                viewBox="0 0 1120 470"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <defs>
+                  <marker
+                    id="arrow"
+                    markerWidth="8"
+                    markerHeight="8"
+                    refX="6"
+                    refY="4"
+                    orient="auto"
+                  >
+                    <path
+                      d="M1 1L6 4L1 7"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    />
+                  </marker>
+                  <marker
+                    id="arrow-feedback"
+                    markerWidth="8"
+                    markerHeight="8"
+                    refX="6"
+                    refY="4"
+                    orient="auto"
+                  >
+                    <path
+                      d="M1 1L6 4L1 7"
+                      fill="none"
+                      stroke="#d0ae78"
+                      stroke-width="1.5"
+                    />
+                  </marker>
+                  <marker
+                    id="arrow-trace"
+                    markerWidth="8"
+                    markerHeight="8"
+                    refX="6"
+                    refY="4"
+                    orient="auto"
+                  >
+                    <path
+                      d="M1 1L6 4L1 7"
+                      fill="none"
+                      stroke="#7fa9a5"
+                      stroke-width="1.5"
+                    />
+                  </marker>
+                </defs>
+                <path class="edge edge-context" d="M133 132V210" />
+                <path
+                  class="edge edge-context"
+                  d="M380 132C380 166 300 174 166 210"
+                />
+                <path class="edge edge-context" d="M380 132V170H360V210" />
+                <path class="edge edge-trace" d="M590 210V168H968V132" />
+                <path class="edge edge-main" data-edge="0" d="M220 274H268" />
+                <path class="edge edge-main" data-edge="1" d="M450 274H498" />
+                <path class="edge edge-main" data-edge="2" d="M680 274H728" />
+                <path class="edge edge-main" data-edge="3" d="M910 274H958" />
+                <path class="edge edge-feedback" d="M820 340V404H360V340" />
+              </svg>
+              <div class="graph-support graph-issue">
+                <span class="brand-icon"
+                  ><img src="brands/github.svg" alt="" width="25" height="25"
+                /></span>
+                <div>
+                  <strong>GitHub Projects</strong><small>Issue + queue</small>
+                </div>
+              </div>
+              <div class="graph-support graph-graphify">
+                <span class="brand-icon graphify-icon"
+                  ><img src="brands/graphify.jpg" alt="" width="35" height="35"
+                /></span>
+                <div>
+                  <strong>Graphify</strong><small>Local code context</small>
+                </div>
+              </div>
+              <div class="graph-support graph-langfuse">
+                <span class="brand-icon"
+                  ><img src="brands/langfuse.svg" alt="" width="25" height="25"
+                /></span>
+                <div>
+                  <strong>Langfuse</strong><small>Optional local traces</small>
+                </div>
+              </div>
+              <div class="graph-stages">
+                <button
+                  type="button"
+                  class="graph-node"
+                  data-graph-step="0"
+                  aria-current="step"
+                >
+                  <span class="node-top"
+                    ><span class="brand-icon"
+                      ><img
+                        src="brands/openclaw.svg"
+                        alt=""
+                        width="25"
+                        height="25" /></span
+                    ><span class="node-number">01</span></span
+                  ><strong>OpenClaw</strong><small>Plan + clarify</small>
+                </button>
+                <button type="button" class="graph-node" data-graph-step="1">
+                  <span class="node-top"
+                    ><span class="brand-stack"
+                      ><img
+                        src="brands/claude.svg"
+                        alt=""
+                        width="22"
+                        height="22" /><img
+                        src="brands/openai.svg"
+                        alt=""
+                        width="22"
+                        height="22" /><img
+                        src="brands/cursor.svg"
+                        alt=""
+                        width="22"
+                        height="22" /></span
+                    ><span class="node-number">02</span></span
+                  ><strong>Coding agents</strong><small>Tests + code</small>
+                </button>
+                <button type="button" class="graph-node" data-graph-step="2">
+                  <span class="node-top"
+                    ><span class="brand-icon"
+                      ><img
+                        src="brands/python.svg"
+                        alt=""
+                        width="25"
+                        height="25" /></span
+                    ><span class="node-number">03</span></span
+                  ><strong>Devflow engine</strong><small>Test gates</small>
+                </button>
+                <button type="button" class="graph-node" data-graph-step="3">
+                  <span class="node-top"
+                    ><span class="brand-stack"
+                      ><img
+                        src="brands/claude.svg"
+                        alt=""
+                        width="22"
+                        height="22" /><img
+                        src="brands/openai.svg"
+                        alt=""
+                        width="22"
+                        height="22" /></span
+                    ><span class="node-number">04</span></span
+                  ><strong>Reviewer</strong><small>Diff + evidence</small>
+                </button>
+                <button type="button" class="graph-node" data-graph-step="4">
+                  <span class="node-top"
+                    ><span class="brand-icon"
+                      ><img
+                        src="brands/github.svg"
+                        alt=""
+                        width="25"
+                        height="25" /></span
+                    ><span class="node-number">05</span></span
+                  ><strong>GitHub PR</strong><small>CI + merge</small>
+                </button>
+              </div>
+              <span class="graph-edge-label graph-edge-label-context"
+                >Repository context</span
+              ><span class="graph-edge-label graph-edge-label-trace"
+                >Stage spans</span
+              ><span class="graph-edge-label graph-edge-label-loop"
+                >Review findings return to code</span
+              >
+            </div>
+            <div class="graph-footer">
+              <span><i class="legend-line"></i> Handoff</span
+              ><span
+                ><i class="legend-line legend-feedback"></i> Review loop</span
+              ><span><i class="legend-line legend-trace"></i> Trace export</span
+              ><span class="graph-footer-note"
+                >Select any stage to explore it below</span
+              >
+            </div>
           </div>
-          <div class="run-end"><div><h3>Context in. Evidence out.</h3><p>Graphify keeps the code graph local. Langfuse can run in Docker on your machine and collect stage, agent, tool, and gate spans. Detailed prompts, responses, and exposed tool calls require opt-in content capture.</p></div><div><a href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md">Explore observability <span aria-hidden="true">↗</span></a><a href="https://github.com/Rishik-J/devflow#code-graph-and-learning">Explore Graphify <span aria-hidden="true">↗</span></a><p>Model providers still receive context used for their calls. OpenClaw's private internal steps are not exposed.</p></div></div>
+        </section>
+      </div>
+      <section
+        class="section workflow-section shell"
+        id="workflow"
+        aria-labelledby="workflow-title"
+      >
+        <div class="section-heading">
+          <div>
+            <h2 id="workflow-title">One ticket. Every handoff.</h2>
+            <p>
+              Follow an illustrative issue through the actual Devflow stages.
+              The graph above and trace below follow along.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="play-control"
+            id="play-control"
+            aria-label="Pause stage animation"
+          >
+            Pause <span aria-hidden="true">Ⅱ</span>
+          </button>
+        </div>
+        <div class="stage-nav" aria-label="Ticket stages">
+          <button type="button" data-stage="0" aria-current="step">
+            <span>01</span> Plan</button
+          ><button type="button" data-stage="1"><span>02</span> Build</button
+          ><button type="button" data-stage="2"><span>03</span> Verify</button
+          ><button type="button" data-stage="3"><span>04</span> Review</button
+          ><button type="button" data-stage="4"><span>05</span> Merge</button>
+        </div>
+        <div class="stage-meter" aria-hidden="true">
+          <span id="stage-meter-fill"></span>
+        </div>
+        <div class="stage-viewport" aria-live="off" aria-atomic="true">
+          <article class="stage-panel" data-panel="0">
+            <div class="artifact">
+              <div class="artifact-top">
+                <span class="artifact-dot"></span
+                ><strong>issue #12 / plan</strong><span>ILLUSTRATIVE</span>
+              </div>
+              <div class="artifact-body">
+                <small>IMPLEMENTATION PLAN</small>
+                <h3>Add a health endpoint</h3>
+                <div class="artifact-line">
+                  <b>01</b><span>Define response contract</span><i></i>
+                </div>
+                <div class="artifact-line">
+                  <b>02</b><span>Add unit + integration coverage</span><i></i>
+                </div>
+                <div class="artifact-line">
+                  <b>03</b><span>Document failure behavior</span><i></i>
+                </div>
+                <div class="artifact-result">
+                  Plan approval <strong>waiting for configured approver</strong>
+                </div>
+              </div>
+            </div>
+            <div class="stage-copy">
+              <span class="stage-index">01 / PLAN</span>
+              <h3>Begin with a decision, not a prompt.</h3>
+              <p>
+                OpenClaw reads the issue and code context, resolves ambiguity,
+                and proposes acceptance criteria. Plan approval is on by
+                default.
+              </p>
+              <div class="tech-list">
+                <span
+                  ><img
+                    src="brands/openclaw.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />OpenClaw</span
+                ><span
+                  ><img
+                    src="brands/github.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />GitHub Projects</span
+                ><span class="text-tech">Graphify context</span>
+              </div>
+              <div class="stage-trace-link">
+                Trace <code>stage.refining</code>
+                <span aria-hidden="true">↘</span>
+              </div>
+            </div>
+          </article>
+          <article class="stage-panel" data-panel="1" hidden>
+            <div class="artifact">
+              <div class="artifact-top">
+                <span class="artifact-dot"></span
+                ><strong>worktree / implementation</strong
+                ><span>ILLUSTRATIVE</span>
+              </div>
+              <div class="artifact-body">
+                <small>CODING AGENT SESSION</small>
+                <h3>Tests first. Then the change.</h3>
+                <div class="artifact-file">
+                  <span>+</span> tests/test_health.py
+                </div>
+                <div class="artifact-file"><span>+</span> src/health.py</div>
+                <div class="artifact-file"><span>~</span> docs/api.md</div>
+                <div class="artifact-result">
+                  Isolated checkout <strong>ticket worktree</strong>
+                </div>
+              </div>
+            </div>
+            <div class="stage-copy">
+              <span class="stage-index">02 / BUILD</span>
+              <h3>The right agent works in its own checkout.</h3>
+              <p>
+                Devflow routes test design and implementation to an
+                authenticated coding CLI. Claude Code, Codex, and Cursor are
+                supported alternatives.
+              </p>
+              <div class="tech-list">
+                <span
+                  ><img
+                    src="brands/claude.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Claude Code</span
+                ><span
+                  ><img
+                    src="brands/openai.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Codex CLI</span
+                ><span
+                  ><img
+                    src="brands/cursor.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Cursor</span
+                >
+              </div>
+              <div class="stage-trace-link">
+                Trace <code>stage.implementing</code>
+                <span aria-hidden="true">↘</span>
+              </div>
+            </div>
+          </article>
+          <article class="stage-panel" data-panel="2" hidden>
+            <div class="artifact">
+              <div class="artifact-top">
+                <span class="artifact-dot"></span
+                ><strong>clean checkout / gates</strong
+                ><span>ILLUSTRATIVE</span>
+              </div>
+              <div class="artifact-body">
+                <small>CONFIGURED TEST GATES</small>
+                <h3>Run the checks outside the agent workspace.</h3>
+                <div class="artifact-check">
+                  <span>✓</span> unit <strong>passed</strong>
+                </div>
+                <div class="artifact-check">
+                  <span>✓</span> integration <strong>passed</strong>
+                </div>
+                <div class="artifact-check">
+                  <span>✓</span> lint <strong>passed</strong>
+                </div>
+                <div class="artifact-result">
+                  Engine verdict <strong>gates passed</strong>
+                </div>
+              </div>
+            </div>
+            <div class="stage-copy">
+              <span class="stage-index">03 / VERIFY</span>
+              <h3>Evidence comes from the engine.</h3>
+              <p>
+                Devflow runs configured gates in a separate checkout and records
+                each result. Failed checks send the ticket back for repair.
+              </p>
+              <div class="tech-list">
+                <span
+                  ><img
+                    src="brands/python.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Python engine</span
+                ><span class="text-tech">Configured test commands</span>
+              </div>
+              <div class="stage-trace-link">
+                Trace <code>stage.gates</code> · <code>gate.result</code>
+                <span aria-hidden="true">↘</span>
+              </div>
+            </div>
+          </article>
+          <article class="stage-panel" data-panel="3" hidden>
+            <div class="artifact">
+              <div class="artifact-top">
+                <span class="artifact-dot"></span
+                ><strong>PR review / round 1</strong><span>ILLUSTRATIVE</span>
+              </div>
+              <div class="artifact-body">
+                <small>INDEPENDENT REVIEW</small>
+                <h3>Inspect the diff and gate evidence.</h3>
+                <div class="artifact-review">
+                  <span>✓</span>
+                  <div>
+                    <strong>Acceptance criteria covered</strong
+                    ><small>Diff and test plan checked</small>
+                  </div>
+                </div>
+                <div class="artifact-review">
+                  <span>✓</span>
+                  <div>
+                    <strong>No blocking findings</strong
+                    ><small>Reviewed commit recorded</small>
+                  </div>
+                </div>
+                <div class="artifact-result">
+                  If findings block <strong>return to coding agent ↶</strong>
+                </div>
+              </div>
+            </div>
+            <div class="stage-copy">
+              <span class="stage-index">04 / REVIEW</span>
+              <h3>A separate pass can send work back.</h3>
+              <p>
+                The reviewer checks the diff and test evidence. Findings return
+                to the coder; the loop continues within configured limits.
+              </p>
+              <div class="tech-list">
+                <span
+                  ><img
+                    src="brands/claude.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Claude Code</span
+                ><span
+                  ><img
+                    src="brands/openai.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Codex CLI</span
+                ><span class="text-tech">Different tool preferred</span>
+              </div>
+              <div class="stage-trace-link">
+                Trace <code>stage.in_review</code>
+                <span aria-hidden="true">↘</span>
+              </div>
+            </div>
+          </article>
+          <article class="stage-panel" data-panel="4" hidden>
+            <div class="artifact">
+              <div class="artifact-top">
+                <span class="artifact-dot"></span
+                ><strong>pull request / merge</strong><span>ILLUSTRATIVE</span>
+              </div>
+              <div class="artifact-body">
+                <small>MERGE GATE</small>
+                <h3>Only the reviewed commit ships.</h3>
+                <div class="artifact-check">
+                  <span>✓</span> CI checks <strong>passed</strong>
+                </div>
+                <div class="artifact-check">
+                  <span>✓</span> PR approval <strong>recorded</strong>
+                </div>
+                <div class="artifact-check">
+                  <span>✓</span> remote head <strong>matches review</strong>
+                </div>
+                <div class="artifact-result">
+                  Outcome <strong>merged + learning captured</strong>
+                </div>
+              </div>
+            </div>
+            <div class="stage-copy">
+              <span class="stage-index">05 / MERGE</span>
+              <h3>Merge the commit that passed review.</h3>
+              <p>
+                Devflow checks CI, approval, and the remote head before merging.
+                A changed branch blocks the merge; a successful run records
+                learnings.
+              </p>
+              <div class="tech-list">
+                <span
+                  ><img
+                    src="brands/github.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />GitHub</span
+                ><span
+                  ><img
+                    src="brands/python.svg"
+                    alt=""
+                    width="23"
+                    height="23"
+                  />Devflow engine</span
+                >
+              </div>
+              <div class="stage-trace-link">
+                Trace <code>stage.awaiting_merge_approval</code>
+                <span aria-hidden="true">↘</span>
+              </div>
+            </div>
+          </article>
+        </div>
+        <p class="stage-note">
+          The issue, file names, and results shown above are illustrative.
+          Devflow runs your repository’s own configured checks.
+        </p>
+      </section>
+      <section
+        class="section trace-section"
+        id="trace"
+        aria-labelledby="trace-title-heading"
+      >
+        <div class="shell">
+          <div class="section-heading">
+            <div>
+              <h2 id="trace-title-heading">See the work behind each stage.</h2>
+              <p>
+                Local Langfuse can capture the workflow trace: handoffs, tools,
+                gates, review rounds, and available usage. Select a span to
+                inspect its role.
+              </p>
+            </div>
+            <a
+              class="inline-link"
+              href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md"
+              >Observability guide <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <div
+            class="trace-explorer"
+            aria-label="Illustrative Langfuse trace explorer"
+          >
+            <div class="trace-header">
+              <div>
+                <img
+                  src="brands/langfuse.svg"
+                  alt=""
+                  width="26"
+                  height="26"
+                /><strong>ticket.run</strong><span>session · issue-12</span>
+              </div>
+              <span class="trace-badge">ILLUSTRATIVE TRACE</span>
+            </div>
+            <div class="trace-layout">
+              <div class="trace-tree" aria-label="Trace observations">
+                <p class="trace-tree-label">
+                  OBSERVATIONS <span>real span names</span>
+                </p>
+                <button type="button" data-trace-step="0" aria-current="true">
+                  <span class="tree-branch" aria-hidden="true">├─</span
+                  ><span
+                    ><strong>stage.refining</strong
+                    ><small>OpenClaw · plan</small></span
+                  ><i aria-hidden="true"></i></button
+                ><button type="button" data-trace-step="1">
+                  <span class="tree-branch" aria-hidden="true">├─</span
+                  ><span
+                    ><strong>stage.implementing</strong
+                    ><small>Coding CLI · worktree</small></span
+                  ><i aria-hidden="true"></i></button
+                ><button type="button" data-trace-step="2">
+                  <span class="tree-branch" aria-hidden="true">├─</span
+                  ><span
+                    ><strong>stage.gates</strong
+                    ><small>Devflow · configured checks</small></span
+                  ><i aria-hidden="true"></i></button
+                ><button type="button" data-trace-step="3">
+                  <span class="tree-branch" aria-hidden="true">├─</span
+                  ><span
+                    ><strong>stage.in_review</strong
+                    ><small>Reviewer · diff + tests</small></span
+                  ><i aria-hidden="true"></i></button
+                ><button type="button" data-trace-step="4">
+                  <span class="tree-branch" aria-hidden="true">└─</span
+                  ><span
+                    ><strong>stage.awaiting_merge_approval</strong
+                    ><small>GitHub · CI + reviewed SHA</small></span
+                  ><i aria-hidden="true"></i>
+                </button>
+                <div class="related-spans">
+                  <span>Also recorded</span><code>graph.refresh</code
+                  ><code>routing.selected</code><code>gate.result</code
+                  ><code>tool.github</code>
+                </div>
+              </div>
+              <div class="trace-inspector">
+                <div class="inspector-top">
+                  <span id="trace-phase">PLAN / 01</span><span>CHAIN</span>
+                </div>
+                <h3 id="trace-name">stage.refining</h3>
+                <p id="trace-description">
+                  OpenClaw turns the issue into a plan with acceptance criteria.
+                  The engine records the handoff and waits for approval when
+                  that gate is enabled.
+                </p>
+                <dl>
+                  <div>
+                    <dt>Component</dt>
+                    <dd id="trace-component">OpenClaw planner</dd>
+                  </div>
+                  <div>
+                    <dt>Child observation</dt>
+                    <dd>
+                      <code id="trace-child">agent.&lt;driver&gt;.planner</code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Evidence</dt>
+                    <dd id="trace-evidence">Plan, questions, approval state</dd>
+                  </div>
+                </dl>
+                <p class="inspector-note" id="trace-note">
+                  Supplied prompts and final responses require opt-in content
+                  capture.
+                </p>
+              </div>
+            </div>
+            <div class="trace-footer">
+              <span
+                >Example ticket content; instrumentation names are real.</span
+              ><span
+                >Resumed runs have new traces within one ticket session.</span
+              >
+            </div>
+          </div>
+          <div class="context-row">
+            <div>
+              <h3>Local context, local observability.</h3>
+              <p>
+                Graphify refreshes the code graph in each checkout. Langfuse can
+                run in Docker on your machine. Model providers still receive the
+                context used for their calls.
+              </p>
+            </div>
+            <div>
+              <h3>Detail when you want it.</h3>
+              <p>
+                Metadata tracing is the default. Opt in to capture supplied
+                prompts, final responses, exposed tool calls, and gate output.
+                Hidden provider internals are not available.
+              </p>
+            </div>
+          </div>
         </div>
       </section>
-      <section class="section shell setup" id="setup" aria-labelledby="setup-title"><div class="section-lead"><h2 id="setup-title">Start with one small issue.</h2><p>Bring a GitHub repository, a Project queue, OpenClaw, Graphify, and an authenticated coding-agent CLI. Devflow runs on macOS or Linux with Python 3.11+.</p></div><ol class="setup-list"><li><span>01</span><div><h3>Install the CLI</h3><pre><code>uv tool install "git+https://github.com/Rishik-J/devflow.git"
-uv tool install graphifyy</code></pre></div></li><li><span>02</span><div><h3>Connect your tools</h3><p>Sign in with <code>gh</code>, start the OpenClaw gateway, and run <code>devflow setup-openclaw</code>. Check the connection with <code>devflow doctor</code>.</p></div></li><li><span>03</span><div><h3>Initialize and run</h3><p>Run <code>devflow init</code> in your repository. Review <code>.devflow/config.toml</code>, then preview the queue with <code>devflow run --dry-run</code>.</p></div></li></ol><a class="button button-dark" href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Follow the complete setup guide <span aria-hidden="true">↗</span></a></section>
-      <section class="section section-dark closing"><div class="shell closing-inner"><div><h2>Give your agents a workflow.</h2><p>Start with a ticket. Keep the plan, test results, review, and merge connected.</p></div><a class="button button-white" href="https://github.com/Rishik-J/devflow">View Devflow on GitHub <span aria-hidden="true">↗</span></a></div></section>
+      <section
+        class="section setup-section shell"
+        id="setup"
+        aria-labelledby="setup-title"
+      >
+        <div class="section-heading">
+          <div>
+            <h2 id="setup-title">Start with one small issue.</h2>
+            <p>
+              Bring a GitHub repository and Project queue, OpenClaw, Graphify,
+              and an authenticated coding agent. Devflow runs on macOS or Linux
+              with Python 3.11+.
+            </p>
+          </div>
+        </div>
+        <ol class="setup-list">
+          <li>
+            <span>01</span>
+            <div>
+              <h3>Install</h3>
+              <pre><code>uv tool install "git+https://github.com/Rishik-J/devflow.git"
+uv tool install graphifyy</code></pre>
+            </div>
+          </li>
+          <li>
+            <span>02</span>
+            <div>
+              <h3>Connect</h3>
+              <p>
+                Sign in with <code>gh</code>, start OpenClaw, and run
+                <code>devflow setup-openclaw</code>. Check connections with
+                <code>devflow doctor</code>.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span>03</span>
+            <div>
+              <h3>Initialize</h3>
+              <p>
+                Run <code>devflow init</code> in your repository. Review
+                <code>.devflow/config.toml</code> and preview with
+                <code>devflow run --dry-run</code>.
+              </p>
+            </div>
+          </li>
+        </ol>
+        <a
+          class="button button-dark"
+          href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md"
+          >Follow the setup guide <span aria-hidden="true">↗</span></a
+        >
+      </section>
+      <section class="section closing">
+        <div class="shell closing-inner">
+          <div>
+            <h2>Give your agents a workflow.</h2>
+            <p>Connect the plan, code, tests, review, and merge.</p>
+          </div>
+          <a
+            class="button button-light"
+            href="https://github.com/Rishik-J/devflow"
+            >View Devflow on GitHub <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </section>
     </main>
-  <footer class="footer shell"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>devflow</a><p>Open source under MIT · v0.1.0</p><nav aria-label="Footer navigation"><a href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Docs</a><a href="https://github.com/Rishik-J/devflow/issues">Issues</a><a href="https://github.com/Rishik-J/devflow">GitHub</a></nav></footer>
-</body>
+    <footer class="footer shell">
+      <a class="brand" href="./"
+        ><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span
+        >devflow</a
+      >
+      <p>Open source under MIT · v0.1.0</p>
+      <nav aria-label="Footer navigation">
+        <a
+          href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md"
+          >Docs</a
+        ><a href="https://github.com/Rishik-J/devflow/issues">Issues</a
+        ><a href="https://github.com/Rishik-J/devflow">GitHub</a>
+      </nav>
+    </footer>
+  </body>
 </html>
