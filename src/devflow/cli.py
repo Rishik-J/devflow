@@ -400,6 +400,14 @@ def main(argv: list[str] | None = None) -> int:
                                       help="summarise latency for one issue's session")
         trace_parser.set_defaults(func=trace_command)
 
+    from .ui import command as ui_command
+    p_ui = sub.add_parser("ui", help="launch local web dashboard to track ticket stages and progress")
+    p_ui.add_argument("path", nargs="?", default=".")
+    p_ui.add_argument("--port", type=int, default=8788, help="port to bind server (default: 8788)")
+    p_ui.add_argument("--host", default="127.0.0.1", help="host to bind server (default: 127.0.0.1)")
+    p_ui.add_argument("--no-browser", action="store_true", help="do not open browser automatically")
+    p_ui.set_defaults(func=ui_command)
+
     args = parser.parse_args(argv)
     from . import telemetry
     from .detect import repo_root
