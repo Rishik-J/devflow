@@ -7,7 +7,7 @@
     <title>Devflow — Build with AI. Ship with proof.</title>
     <meta
       name="description"
-      content="Devflow connects your GitHub issues, OpenClaw, coding agents, test gates, review, and merge in one inspectable workflow. Open source for anyone building with AI."
+      content="Devflow turns GitHub issues into reviewed changes with coding agents, a local code graph, targeted tests, and an inspectable ticket history. Open source for anyone building with AI."
     />
     <link rel="canonical" href="https://rishik-j.github.io/devflow/" />
     <meta property="og:type" content="website" />
@@ -17,7 +17,7 @@
     />
     <meta
       property="og:description"
-      content="One connected workflow from issue to reviewed merge, with a graph of the handoffs and a trace of the work."
+      content="From issue to reviewed merge: see the code graph, test evidence, agent handoffs, and the exact commit that ships."
     />
     <meta property="og:url" content="https://rishik-j.github.io/devflow/" />
     <meta
@@ -49,7 +49,8 @@
           >devflow</a
         >
         <nav aria-label="Main navigation">
-          <a href="#workflow">Workflow</a><a href="#trace">Trace</a
+          <a href="#workflow">Workflow</a><a href="#code-graph">Code graph</a
+          ><a href="#workbench">Workbench</a><a href="#trace">Trace</a
           ><a href="#setup">Setup</a
           ><a class="nav-github" href="https://github.com/Rishik-J/devflow"
             >GitHub <span aria-hidden="true">↗</span></a
@@ -65,9 +66,9 @@
               Build with AI.<br /><span>Ship with proof.</span>
             </h1>
             <p>
-              Devflow connects the agents, code graph, tests, review, and GitHub
-              into one workflow you can inspect—from the first issue to the
-              commit that ships.
+              Devflow connects your issue queue, coding agents, code graph,
+              tests, and review. Follow the evidence from the first plan to
+              the exact commit that ships.
             </p>
             <div class="hero-actions">
               <a
@@ -374,7 +375,7 @@
               </div>
               <div class="artifact-body">
                 <small>CODING AGENT SESSION</small>
-                <h3>Tests first. Then the change.</h3>
+                <h3>Test plan. Then implementation.</h3>
                 <div class="artifact-file">
                   <span>+</span> tests/test_health.py
                 </div>
@@ -451,8 +452,9 @@
               <span class="stage-index">03 / VERIFY</span>
               <h3>Evidence comes from the engine.</h3>
               <p>
-                Devflow runs configured gates in a separate checkout and records
-                each result. Failed checks send the ticket back for repair.
+                Devflow runs configured gates against the coding worktree and
+                records each result. Review repeats verification in a detached
+                checkout at the candidate commit. Failures return for repair.
               </p>
               <div class="tech-list">
                 <span
@@ -502,8 +504,9 @@
               <span class="stage-index">04 / REVIEW</span>
               <h3>A separate pass can send work back.</h3>
               <p>
-                The reviewer checks the diff and test evidence. Findings return
-                to the coder; the loop continues within configured limits.
+                The reviewer sees the diff, test evidence, and a graph-derived
+                checklist of affected callers and uncovered symbols. Blocking
+                findings return to the coder within configured limits.
               </p>
               <div class="tech-list">
                 <span
@@ -547,7 +550,7 @@
                   <span>✓</span> remote head <strong>matches review</strong>
                 </div>
                 <div class="artifact-result">
-                  Outcome <strong>merged + learning captured</strong>
+                  Outcome <strong>merged + retro attempted</strong>
                 </div>
               </div>
             </div>
@@ -556,8 +559,8 @@
               <h3>Merge the commit that passed review.</h3>
               <p>
                 Devflow checks CI, approval, and the remote head before merging.
-                A changed branch blocks the merge; a successful run records
-                learnings.
+                A changed branch blocks the merge. A retrospective proposes
+                lessons after a successful run when learning is enabled.
               </p>
               <div class="tech-list">
                 <span
@@ -588,6 +591,45 @@
           Devflow runs your repository’s own configured checks.
         </p>
       </section>
+      <section class="section impact-section shell" id="code-graph" aria-labelledby="impact-title">
+        <div class="section-heading impact-heading">
+          <div>
+            <span class="eyebrow">CODE GRAPH / IN THE LOOP</span>
+            <h2 id="impact-title">Know what a change touches.</h2>
+            <p>
+              Graphify keeps a local map of files and symbols. Devflow gives the
+              planner a focused neighborhood, finds affected callers and tests
+              from the diff, and takes that evidence into review.
+            </p>
+          </div>
+          <a class="inline-link" href="https://github.com/Rishik-J/devflow/blob/main/README.md#code-graph-and-learning">Explore graph commands <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="impact-map" role="img" aria-label="Illustrative code graph: a changed function connects to an external caller and two covering tests">
+          <div class="impact-map-top"><span class="impact-map-dot"></span><strong>Change impact</strong><span>ILLUSTRATIVE GRAPH SLICE</span></div>
+          <div class="impact-columns">
+            <div class="impact-column">
+              <span class="impact-kicker">01 / DIFF</span>
+              <div class="impact-node impact-node-primary"><small>CHANGED SYMBOL</small><strong>validate_order()</strong><span>src/orders.py</span></div>
+            </div>
+            <div class="impact-column">
+              <span class="impact-kicker">02 / CALLERS</span>
+              <div class="impact-node"><small>OUTSIDE THE DIFF</small><strong>checkout()</strong><span>src/checkout.py</span></div>
+              <div class="impact-node"><small>DEPENDENT MODULE</small><strong>api/orders.py</strong><span>contract to review</span></div>
+            </div>
+            <div class="impact-column">
+              <span class="impact-kicker">03 / TESTS</span>
+              <div class="impact-node impact-node-test"><small>COVERING TEST</small><strong>test_checkout.py</strong><span>run early</span></div>
+              <div class="impact-node impact-node-test"><small>COVERING TEST</small><strong>test_orders.py</strong><span>run early</span></div>
+            </div>
+          </div>
+          <div class="impact-map-footer"><span>Graph-derived leads are checked against source and the full configured gates still run.</span><span>Graph unavailable? The ticket continues.</span></div>
+        </div>
+        <div class="impact-features">
+          <div><span>PLAN</span><h3>Focused context</h3><p>A bounded one to two hop slice helps the planner name affected callers and test files without sending the entire graph.</p></div>
+          <div><span>VERIFY</span><h3>Impacted tests first</h3><p>When supported, Devflow runs graph-matched pytest files ahead of the configured full suite and records the ordering.</p></div>
+          <div><span>REVIEW</span><h3>Blast-radius checklist</h3><p>The reviewer checks external callers, dependent modules, and symbols without covering tests before approving the commit.</p></div>
+        </div>
+      </section>
       <section
         class="section trace-section"
         id="trace"
@@ -598,9 +640,9 @@
             <div>
               <h2 id="trace-title-heading">See the work behind each stage.</h2>
               <p>
-                Local Langfuse can capture the workflow trace: handoffs, tools,
-                gates, review rounds, and available usage. Select a span to
-                inspect its role.
+                Local Langfuse can capture handoffs, graph freshness, tools,
+                gates, review rounds, stall warnings, and available usage.
+                Select a span to inspect its role.
               </p>
             </div>
             <a
@@ -663,7 +705,7 @@
                 <div class="related-spans">
                   <span>Also recorded</span><code>graph.refresh</code
                   ><code>routing.selected</code><code>gate.result</code
-                  ><code>tool.github</code>
+                  ><code>gate.order</code><code>stall.detected</code>
                 </div>
               </div>
               <div class="trace-inspector">
@@ -726,6 +768,28 @@
           </div>
         </div>
       </section>
+      <section class="section workbench-section shell" id="workbench" aria-labelledby="workbench-title">
+        <div class="section-heading workbench-heading">
+          <div>
+            <span class="eyebrow">LOCAL WORKBENCH</span>
+            <h2 id="workbench-title">Open the ticket. See the evidence.</h2>
+            <p>
+              <code>devflow ui</code> opens a local board. Select a ticket to
+              inspect its brief, plan, graph impact, gate results, and reviewer
+              findings in one place.
+            </p>
+          </div>
+          <a class="inline-link" href="https://github.com/Rishik-J/devflow/blob/main/README.md#dashboard-and-ticket-inspector">Dashboard guide <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="workbench-frame" aria-label="Illustrative Devflow local ticket inspector">
+          <div class="workbench-toolbar"><span class="workbench-lights" aria-hidden="true"><i></i><i></i><i></i></span><strong>devflow / workbench</strong><span>127.0.0.1:8788</span></div>
+          <div class="workbench-content">
+            <div class="workbench-board"><span class="workbench-label">IN REVIEW</span><div class="workbench-ticket"><small>#37 · GRAPH IMPACT</small><strong>Verify affected callers before merge</strong><span>Plan complete · Gates passed</span></div><div class="workbench-ticket workbench-ticket-muted"><small>#38 · MERGED</small><strong>Core blast-radius engine</strong><span>Reviewed commit recorded</span></div></div>
+            <div class="workbench-drawer"><div class="drawer-head"><small>TICKET INSPECTOR</small><strong>#37 <span>In review</span></strong></div><div class="drawer-tabs"><span>Overview</span><span>Plan</span><span class="drawer-tab-current">Blast radius</span><span>Gates</span></div><div class="drawer-body"><p>Review the affected surface</p><div><span>Changed symbol</span><strong>src/devflow/gates.py</strong></div><div><span>External callers</span><strong>Checked against diff</strong></div><div><span>Impacted tests</span><strong>Prioritized before full suite</strong></div><div><span>Review</span><strong>Findings tied to candidate SHA</strong></div></div><small class="drawer-caption">Example content; the inspector reads your local ticket state.</small></div>
+          </div>
+        </div>
+        <p class="workbench-note">The inspector is read-only. Its graph and gate details reflect evidence recorded by the installed Devflow version; older tickets can have empty sections.</p>
+      </section>
       <section
         class="section setup-section shell"
         id="setup"
@@ -767,8 +831,9 @@ uv tool install graphifyy</code></pre>
               <h3>Initialize</h3>
               <p>
                 Run <code>devflow init</code> in your repository. Review
-                <code>.devflow/config.toml</code> and preview with
-                <code>devflow run --dry-run</code>.
+                <code>.devflow/config.toml</code>, preview with
+                <code>devflow run --dry-run</code>, and inspect tickets with
+                <code>devflow ui</code>.
               </p>
             </div>
           </li>
