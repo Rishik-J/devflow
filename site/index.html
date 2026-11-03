@@ -3,246 +3,70 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#f6efdd">
-  <title>Devflow — From GitHub issue to reviewed pull request</title>
-  <meta name="description" content="Devflow turns a GitHub Project into an engineering queue: OpenClaw plans, Claude Code, Codex or Cursor build, an independent reviewer checks, and you approve the plan and the merge. Open source, early-stage v0.1.0.">
-  <meta name="author" content="Rishik J">
+  <meta name="theme-color" content="#111413">
+  <title>Devflow — Make AI-built software easier to trust</title>
+  <meta name="description" content="Devflow takes a GitHub issue through planning, coding, tests, review, and a verified merge. Open source workflow orchestration for anyone building with AI.">
   <link rel="canonical" href="https://rishik-j.github.io/devflow/">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Devflow">
-  <meta property="og:locale" content="en_US">
-  <meta property="og:title" content="Devflow — From GitHub issue to reviewed pull request">
-  <meta property="og:description" content="Plan, build, verify, review, merge: a repeatable ticket loop with two human approval gates, a local code graph and optional local Langfuse tracing.">
+  <meta property="og:title" content="Devflow — Make AI-built software easier to trust">
+  <meta property="og:description" content="One issue, one plan, a tested change, an independent review, and a verified merge.">
   <meta property="og:url" content="https://rishik-j.github.io/devflow/">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Devflow — From GitHub issue to reviewed pull request">
-  <meta name="twitter:description" content="A repeatable ticket loop with your approval at the plan and at the merge.">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
-
-  <header class="masthead">
-    <div class="wrap masthead-row">
-      <a class="wordmark" href="./" aria-label="Devflow home">devflow<span class="version">v0.1.0</span></a>
-      <nav aria-label="Main navigation">
-        <a href="#stages">Stages</a>
-        <a href="#evidence">Evidence</a>
-        <a href="#setup">Setup</a>
-        <a class="nav-repo" href="https://github.com/Rishik-J/devflow">GitHub<span aria-hidden="true"> ↗</span></a>
-      </nav>
-    </div>
-    <div class="route-rule" aria-hidden="true"><i></i></div>
-  </header>
-
-  <main id="main">
-    <section class="hero wrap" aria-labelledby="hero-title">
-      <p class="kicker">Engineering workbench · OpenClaw + your coding agents</p>
-      <div class="hero-head">
-        <h1 id="hero-title">From GitHub issue to <em>reviewed</em> pull request.</h1>
-        <div class="hero-side">
-          <p class="lede">Devflow turns a GitHub Project into an engineering queue. Agents bring judgment; the engine owns state, tests, commits and merges; you approve the plan and the merge.</p>
-          <p class="actions">
-            <a class="button" href="#setup">Run your first ticket<span aria-hidden="true"> ↓</span></a>
-            <a class="text-link" href="https://github.com/Rishik-J/devflow">Read the source<span aria-hidden="true"> ↗</span></a>
-          </p>
-          <p class="status-line">Early-stage v0.1.0 · MIT · macOS and Linux targets</p>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="dark">
+    <header class="site-header shell">
+      <a class="brand" href="./" aria-label="Devflow home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>devflow</a>
+      <nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#setup">Get started</a><a class="nav-github" href="https://github.com/Rishik-J/devflow">GitHub <span aria-hidden="true">↗</span></a></nav>
+    </header>
+    <main id="main">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title">AI can write the code.<br><span>Devflow handles the workflow.</span></h1>
+          <p>Take a GitHub issue from idea to reviewed pull request. Devflow coordinates the plan, coding agents, tests, review, and merge—with a record of what happened at every step.</p>
+          <div class="hero-actions"><a class="button button-white" href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Get started <span aria-hidden="true">↗</span></a><a class="button-link" href="#demo">See the workflow <span aria-hidden="true">↓</span></a></div>
+          <p class="hero-note">Open source · MIT · Early-stage v0.1.0</p>
         </div>
-      </div>
-
-      <figure class="plate" aria-labelledby="plate-cap">
-        <div class="plate-scroll">
-          <picture><source media="(max-width: 52rem)" srcset="workflow-mobile.svg"><img src="workflow.svg" width="1280" height="800" alt="Schematic of illustrative issue 12 moving through plan, build, verify, review and merge. Human approval gates follow planning and precede merging. Review findings can return to build."></picture>
+        <div class="demo" id="demo" aria-label="Illustrative Devflow ticket walkthrough">
+          <div class="demo-top"><span class="demo-identity"><span class="live-dot" aria-hidden="true"></span> Engineering queue</span><span>Illustrative ticket</span></div>
+          <div class="demo-heading"><span class="ticket-number">#12</span><h2>Add a health endpoint</h2><span class="demo-status" id="demo-status">Planning</span></div>
+          <div class="demo-progress" aria-label="Workflow stages">
+            <button type="button" data-step="0" aria-current="step"><span class="step-line" aria-hidden="true"></span>Plan</button>
+            <button type="button" data-step="1"><span class="step-line" aria-hidden="true"></span>Build</button>
+            <button type="button" data-step="2"><span class="step-line" aria-hidden="true"></span>Verify</button>
+            <button type="button" data-step="3"><span class="step-line" aria-hidden="true"></span>Review</button>
+            <button type="button" data-step="4"><span class="step-line" aria-hidden="true"></span>Merge</button>
+          </div>
+          <div class="demo-body" aria-live="polite" aria-atomic="true">
+            <div class="demo-icon" id="demo-icon" aria-hidden="true">01</div>
+            <div><p class="demo-actor" id="demo-actor">OpenClaw · planner</p><h3 id="demo-title">A plan before code</h3><p id="demo-text">The issue becomes a concrete implementation and test plan. A configured approver reviews it before work begins.</p></div>
+          </div>
+          <div class="demo-bottom"><span id="demo-evidence">Artifact: issue plan</span><button type="button" class="demo-toggle" id="demo-toggle" aria-label="Pause walkthrough">Pause <span aria-hidden="true">Ⅱ</span></button></div>
         </div>
-        <figcaption id="plate-cap"><strong>Plate 01.</strong> One ticket, end to end. The issue and its number are illustrative; the route and the two default approval gates are how devflow works.</figcaption>
-      </figure>
-    </section>
-
-    <section class="band" aria-labelledby="stages-title" id="stages">
-      <div class="wrap">
-        <header class="section-head">
-          <p class="kicker">Five stages</p>
-          <h2 id="stages-title">Open a stage to see who acts, and what has to be true to move on.</h2>
-        </header>
-        <div class="stages">
-          <details open>
-            <summary><span class="num">1</span><span class="stage-name">Plan</span><span class="stage-gist">OpenClaw refines the issue. You approve the plan.</span></summary>
-            <div class="stage-body">
-              <p>OpenClaw refines requirements, asks clarifying questions and proposes a plan. Plan approval is required by default. Only configured approvers count; by default that is the authenticated <code>gh</code> user.</p>
-              <dl class="cmds">
-                <dt><code>/approve</code></dt><dd>Accept the proposed plan, or clarification defaults</dd>
-                <dt><code>/answer …</code></dt><dd>Answer a clarification</dd>
-                <dt><code>/reject …</code></dt><dd>Request a revised plan</dd>
-              </dl>
-              <p class="aside">Comment on the issue. An approval is consumed once.</p>
-            </div>
-          </details>
-          <details>
-            <summary><span class="num">2</span><span class="stage-name">Build</span><span class="stage-gist">Tests, then code, in an isolated git worktree.</span></summary>
-            <div class="stage-body">
-              <p>Claude Code, Codex or Cursor design tests and implement the change through their terminal CLIs, with session resume and configurable usage-based routing. The engine, not the agent, owns state transitions, commits and pushes.</p>
-              <p class="aside">Agents return validated responses. Saying “done” does not advance a ticket.</p>
-            </div>
-          </details>
-          <details>
-            <summary><span class="num">3</span><span class="stage-name">Verify</span><span class="stage-gist">The engine runs gates in a separate checkout.</span></summary>
-            <div class="stage-body">
-              <p>Gates run in a clean checkout, and failures are compared against the base commit. Detection of test commands during <code>devflow init</code> is a starting point: review <code>.devflow/config.toml</code> before the first run.</p>
-              <pre tabindex="0" aria-label="Review setting"><code>[review]
-require_integration = true</code></pre>
-              <p class="aside">With <code>require_integration = true</code>, review is blocked until at least one integration gate is configured. The default is <code>false</code>.</p>
-            </div>
-          </details>
-          <details>
-            <summary><span class="num">4</span><span class="stage-name">Review</span><span class="stage-gist">An independent reviewer checks the diff and the evidence.</span></summary>
-            <div class="stage-body">
-              <p>The reviewer checks the implementation diff and gate evidence. Findings return to the coder for another pass. The reviewer prefers a different tool from the coder when one is available; that is tool-level separation, not a guarantee of a different underlying model.</p>
-              <p class="aside">Review caps bound the loop.</p>
-            </div>
-          </details>
-          <details>
-            <summary><span class="num">5</span><span class="stage-name">Merge</span><span class="stage-gist">Your PR approval merges the reviewed commit.</span></summary>
-            <div class="stage-body">
-              <p>After review and CI checks, <code>/approve</code> on the pull request authorizes the merge. The merge is pinned to the commit that was reviewed; an unexpected branch update blocks it. Afterwards devflow captures evidence-backed lessons.</p>
-              <dl class="cmds">
-                <dt><code>/approve</code></dt><dd>On the PR: authorize merge after review and CI checks</dd>
-                <dt><code>/resume</code></dt><dd>On the issue: resume an escalated ticket</dd>
-              </dl>
-              <p class="aside">An issue-level plan approval does not authorize the later merge.</p>
-            </div>
-          </details>
+        <p class="demo-caption">Select a stage to explore the loop. The ticket shown here is illustrative.</p>
+      </section>
+  </div>
+      <section class="section shell intro" id="how-it-works" aria-labelledby="how-title">
+        <div class="section-lead"><h2 id="how-title">A ticket loop you can inspect.</h2><p>Agents make decisions. Devflow keeps the work moving through explicit checks, records the evidence, and stops when a gate needs attention.</p></div>
+        <div class="process-list">
+          <div class="process-row"><span>01</span><h3>Plan the change</h3><p>OpenClaw refines the issue into a plan. Approval is required by default before coding starts.</p></div>
+          <div class="process-row"><span>02</span><h3>Build and test</h3><p>Claude Code, Codex, or Cursor works in an isolated git worktree. Devflow runs configured checks in a separate checkout.</p></div>
+          <div class="process-row"><span>03</span><h3>Review the result</h3><p>A reviewer checks the diff and test evidence. Findings go back to the coder until the review passes or the loop reaches its limit.</p></div>
+          <div class="process-row"><span>04</span><h3>Merge with confidence</h3><p>Devflow checks CI and merges the exact commit that passed review. PR approval is required by default.</p></div>
         </div>
-      </div>
-    </section>
-
-    <section class="wrap evidence" id="evidence" aria-labelledby="evidence-title">
-      <header class="section-head">
-        <p class="kicker">Evidence you can open</p>
-        <h2 id="evidence-title">A code graph going in. A trace coming out.</h2>
-      </header>
-      <figure class="plate">
-        <div class="plate-scroll">
-          <picture><source media="(max-width: 52rem)" srcset="evidence-mobile.svg"><img src="evidence.svg" width="1280" height="720" alt="Illustrative Graphify file relationship graph and Langfuse workflow trace. The graph highlights a changed file and its neighbors; the trace shows plan, build, gate and review handoffs. No real measurements are shown."></picture>
-        </div>
-        <figcaption><strong>Plate 02.</strong> Graphify supplies local graph context; Langfuse shows what happened. Files, shapes and bar lengths are illustrative; span names come from the observability guide.</figcaption>
-      </figure>
-
-      <div class="evidence-cols">
-        <div>
-          <h3>Graphify: context for each agent</h3>
-          <p>Graphify builds a local code graph on first use in each checkout and the engine rebuilds it when the source fingerprint changes. AST updates run locally without an LLM; agent providers still receive the context used for their model calls.</p>
-          <pre tabindex="0" aria-label="Graph commands"><code>devflow graph status
-devflow graph refresh
-devflow graph context --files src/example.py</code></pre>
-        </div>
-        <div>
-          <h3>Langfuse: a trace of the loop</h3>
-          <p>An optional Docker stack ships in the repository. It records prompts, handoffs, exposed tool calls, review loops, stage timings and available usage. Capture of content is opt-in and redacted; no Langfuse Cloud account is needed.</p>
-          <pre tabindex="0" aria-label="Observability commands"><code># from the devflow source checkout
-./scripts/observability up \
-  --capture-content /absolute/path/to/your/repo
-
-# then, in that repository
-devflow telemetry demo
-devflow telemetry metrics</code></pre>
-          <p class="aside">Open <code>localhost:3300</code>. Usage and cost may be partial or estimated, and private OpenClaw internals are not visible. <a href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md">Observability guide<span aria-hidden="true"> ↗</span></a></p>
-        </div>
-      </div>
-    </section>
-
-    <section class="band setup" id="setup" aria-labelledby="setup-title">
-      <div class="wrap">
-        <header class="section-head">
-          <p class="kicker">Setup</p>
-          <h2 id="setup-title">Start with one small ticket. Read the plan. Review the diff.</h2>
-          <p class="section-note">Needs Python 3.11+ with <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>, Git, the <a href="https://cli.github.com/">GitHub CLI</a>, <a href="https://github.com/openclaw/openclaw">OpenClaw</a>, <a href="https://github.com/Graphify-Labs/graphify">Graphify</a> and at least one authenticated coding-agent CLI (<code>claude</code>, <code>codex</code> or <code>agent</code>). Two are recommended so the reviewer can differ from the coder. Devflow includes no model subscriptions or API credits.</p>
-        </header>
-        <ol class="steps">
-          <li>
-            <h3>Install</h3>
-            <pre tabindex="0" aria-label="Install commands"><code>uv tool install "git+https://github.com/Rishik-J/devflow.git"
-uv tool install graphifyy</code></pre>
-            <p>Installed from the repository; no PyPI release is documented.</p>
-          </li>
-          <li>
-            <h3>Connect GitHub and OpenClaw</h3>
-            <pre tabindex="0" aria-label="Connect commands"><code>gh auth login
-gh auth refresh -h github.com -s project
-
-# separate terminal, if not already running
-openclaw gateway
-
-openclaw models list
-devflow setup-openclaw --model YOUR_PROVIDER/YOUR_MODEL
-devflow doctor</code></pre>
-          </li>
-          <li>
-            <h3>Initialize your repository</h3>
-            <pre tabindex="0" aria-label="Init commands"><code>cd /path/to/your/repo
-devflow init</code></pre>
-            <p>Needs a git repository with a GitHub remote and an initial commit. Review <code>.devflow/config.toml</code>, especially environment setup and test commands.</p>
-          </li>
-          <li>
-            <h3>Create the queue</h3>
-            <pre tabindex="0" aria-label="Queue commands"><code>devflow board-create --title "Engineering queue"
-gh label create devflow --color 0e8a16 \
-  --description "Worked by devflow" --force</code></pre>
-            <p>Create a small issue, label it <code>devflow</code>, add it to the Project and set Status to <strong>Ready</strong>.</p>
-          </li>
-          <li>
-            <h3>Preview, then run</h3>
-            <pre tabindex="0" aria-label="Run commands"><code>devflow board
-devflow run --dry-run
-
-# replace 12 with your issue number
-devflow ticket 12 --watch 20</code></pre>
-            <p><code>run --dry-run</code> previews queue selection without model calls. <code>ticket N --dry-run</code> is different: it can call agents.</p>
-          </li>
-        </ol>
-        <p class="setup-cta">
-          <a class="button" href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Full setup guide<span aria-hidden="true"> ↗</span></a>
-          <a class="text-link" href="https://github.com/Rishik-J/devflow#quick-start">README quick start<span aria-hidden="true"> ↗</span></a>
-        </p>
-      </div>
-    </section>
-
-    <section class="wrap limits" aria-labelledby="limits-title">
-      <header class="section-head">
-        <p class="kicker">Read before you trust it</p>
-        <h2 id="limits-title">Early software. Known edges.</h2>
-      </header>
-      <dl class="ledger">
-        <div><dt>Status</dt><dd>Version 0.1.0. The single-ticket workflow has been exercised on a real repository; queue execution, stop conditions and failure paths have automated integration coverage.</dd></div>
-        <div><dt>Execution</dt><dd>The runner executes sequentially; <code>max_active</code> above 1 does not start parallel workers. No daemon or web dashboard is installed automatically.</dd></div>
-        <div><dt>Limits</dt><dd>STOP and run limits are checked between stages, so a running stage can finish and time or cost can overshoot. Cost tracking excludes unmetered OpenClaw calls and is not a billing guarantee.</dd></div>
-        <div><dt>Security</dt><dd>Worktrees and prompt controls are not a security boundary against arbitrary generated code. Model providers receive the context used for their calls.</dd></div>
-        <div><dt>Autonomy</dt><dd>Both approval gates are on by default. An opt-in autonomous mode with OpenClaw supervision exists for trusted repositories; CI, the reviewed commit and engine gates are still enforced before merge.</dd></div>
-      </dl>
-    </section>
-
-    <section class="closing" aria-labelledby="closing-title">
-      <div class="wrap closing-row">
-        <h2 id="closing-title">Make the next ticket a better workflow.</h2>
-        <p class="actions">
-          <a class="button button-light" href="https://github.com/Rishik-J/devflow">Devflow on GitHub<span aria-hidden="true"> ↗</span></a>
-          <a class="text-link text-link-light" href="https://github.com/Rishik-J/devflow/issues">Open an issue<span aria-hidden="true"> ↗</span></a>
-        </p>
-      </div>
-    </section>
-  </main>
-
-  <footer class="wrap site-footer">
-    <a class="wordmark" href="./">devflow<span class="version">v0.1.0</span></a>
-    <nav aria-label="Footer navigation">
-      <a href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Setup guide</a>
-      <a href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md">Observability</a>
-      <a href="https://github.com/Rishik-J/devflow/blob/main/DESIGN.md">Architecture</a>
-      <a href="https://github.com/Rishik-J/devflow/blob/main/CONTRIBUTING.md">Contributing</a>
-      <a href="https://github.com/Rishik-J/devflow/blob/main/LICENSE">MIT license</a>
-    </nav>
-    <p>© 2026 Rishik J.</p>
-  </footer>
+      </section>
+      <section class="section section-tint" aria-labelledby="context-title"><div class="shell context-grid">
+        <div class="context-copy"><h2 id="context-title">Context in.<br>Evidence out.</h2><p>Agents start with a local Graphify code graph. As they work, optional, opt-in Langfuse content tracing shows supplied prompts, final responses, exposed tool calls, handoffs, and the review loop so you can learn from each ticket.</p><div class="context-links"><a href="https://github.com/Rishik-J/devflow/blob/main/docs/observability.md">Explore observability <span aria-hidden="true">↗</span></a><a href="https://github.com/Rishik-J/devflow#code-graph-and-learning">Explore Graphify <span aria-hidden="true">↗</span></a></div><p class="context-note">Graphify runs locally. Langfuse can run in Docker on your machine. Model providers still receive context used for their calls.</p></div>
+        <div class="trace" aria-label="Illustrative trace of a Devflow run"><div class="trace-top"><span class="trace-dot" aria-hidden="true"></span><strong>ticket #12</strong><span>workflow trace</span></div><div class="trace-body"><div class="trace-row"><span>graph context</span><i class="trace-bar bar-graph"></i><small>local</small></div><div class="trace-row"><span>plan</span><i class="trace-bar bar-plan"></i><small>OpenClaw</small></div><div class="trace-row"><span>code + tests</span><i class="trace-bar bar-code"></i><small>coding agent</small></div><div class="trace-row"><span>test gates</span><i class="trace-bar bar-test"></i><small>engine</small></div><div class="trace-row"><span>review</span><i class="trace-bar bar-review"></i><small>reviewer</small></div></div><div class="trace-foot">Illustrative sequence · no measured timings shown</div></div>
+      </div></section>
+      <section class="section shell setup" id="setup" aria-labelledby="setup-title"><div class="section-lead"><h2 id="setup-title">Start with one small issue.</h2><p>Bring a GitHub repository, a Project queue, OpenClaw, Graphify, and an authenticated coding-agent CLI. Devflow runs on macOS or Linux with Python 3.11+.</p></div><ol class="setup-list"><li><span>01</span><div><h3>Install the CLI</h3><pre><code>uv tool install "git+https://github.com/Rishik-J/devflow.git"
+uv tool install graphifyy</code></pre></div></li><li><span>02</span><div><h3>Connect your tools</h3><p>Sign in with <code>gh</code>, start the OpenClaw gateway, and run <code>devflow setup-openclaw</code>. Check the connection with <code>devflow doctor</code>.</p></div></li><li><span>03</span><div><h3>Initialize and run</h3><p>Run <code>devflow init</code> in your repository. Review <code>.devflow/config.toml</code>, then preview the queue with <code>devflow run --dry-run</code>.</p></div></li></ol><a class="button button-dark" href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Follow the complete setup guide <span aria-hidden="true">↗</span></a></section>
+      <section class="section section-dark closing"><div class="shell closing-inner"><div><h2>Give your agents a workflow.</h2><p>Start with a ticket. Keep the plan, test results, review, and merge connected.</p></div><a class="button button-white" href="https://github.com/Rishik-J/devflow">View Devflow on GitHub <span aria-hidden="true">↗</span></a></div></section>
+    </main>
+  <footer class="footer shell"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>devflow</a><p>Open source under MIT · v0.1.0</p><nav aria-label="Footer navigation"><a href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md">Docs</a><a href="https://github.com/Rishik-J/devflow/issues">Issues</a><a href="https://github.com/Rishik-J/devflow">GitHub</a></nav></footer>
 </body>
 </html>
