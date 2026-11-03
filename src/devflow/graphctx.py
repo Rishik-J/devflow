@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import shutil
 import subprocess
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import telemetry
@@ -266,4 +267,367 @@ def agent_preamble(root: Path, files: list[str] | None = None) -> str:
         "A knowledge graph of this repo is available. Use it to find where things live and "
         "what a change touches before reading files or searching. It was refreshed for the "
         "current state of this checkout.\n\n" + digest(root, files)
+    )
+
+
+# --------------------------------------------------------------------------------------------
+# Impact engine: deterministic, LLM-free blast radius computed from graph.json alone.
+# Edges point from the dependent to the dependency (caller -> callee), so "who is affected by a
+# change" is a reverse walk.
+# --------------------------------------------------------------------------------------------
+
+CALLER_RELATIONS = frozenset(
+    {"calls", "indirect_call", "uses", "references", "inherits", "method"}
+)
+IMPORT_RELATIONS = frozenset({"imports", "imports_from"})
+CONSUMER_RELATIONS = CALLER_RELATIONS | IMPORT_RELATIONS | {"re_exports"}
+TEST_HOPS = 2
+
+
+class GraphUnavailable(RuntimeError):
+    """graph.json is missing or unreadable."""
+
+
+@dataclass(frozen=True)
+class Symbol:
+    id: str
+    label: str
+    file: str
+    line: int
+    role: str  # "defined" | "touched"
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "label": self.label, "file": self.file, "line": self.line,
+                "role": self.role}
+
+
+@dataclass(frozen=True)
+class Caller:
+    id: str
+    symbol: str
+    file: str
+    hop: int
+    relation: str
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "symbol": self.symbol, "file": self.file, "hop": self.hop,
+                "relation": self.relation}
+
+
+class SymbolList(list):
+    """A sorted list of Symbol that also carries the files the graph knows nothing about."""
+
+    unknown_files: list[str]
+
+    def __init__(self, items=(), unknown_files=()):
+        super().__init__(items)
+        self.unknown_files = list(unknown_files)
+
+
+@dataclass(frozen=True)
+class BlastRadius:
+    files: list[str]
+    unknown_files: list[str]
+    depth: int
+    symbols: list[Symbol]
+    callers: dict[int, list[Caller]]
+    dependent_modules: list[dict]
+    external_contracts: list[dict]
+
+
+@dataclass(frozen=True)
+class ImpactReport:
+    files: list[str]
+    unknown_files: list[str]
+    depth: int
+    graph_state: str
+    symbols: list[Symbol]
+    callers: dict[int, list[Caller]]
+    dependent_modules: list[dict]
+    external_contracts: list[dict]
+    test_coverage: dict[str, list[str]] = field(default_factory=dict)
+    uncovered: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "files": list(self.files),
+            "unknown_files": list(self.unknown_files),
+            "depth": self.depth,
+            "graph_state": self.graph_state,
+            "symbols": [s.to_dict() for s in self.symbols],
+            "callers": {str(h): [c.to_dict() for c in cs] for h, cs in sorted(self.callers.items())},
+            "dependent_modules": [dict(m) for m in self.dependent_modules],
+            "external_contracts": [
+                {**c, "consumers": list(c["consumers"])} for c in self.external_contracts
+            ],
+            "test_coverage": {k: list(v) for k, v in sorted(self.test_coverage.items())},
+            "uncovered": list(self.uncovered),
+        }
+
+    def to_markdown(self) -> str:
+        out = ["# Impact report", ""]
+        out.append(f"- Files: {', '.join(f'`{f}`' for f in self.files) or '(none)'}")
+        if self.unknown_files:
+            out.append("- Not in the graph (new files?): "
+                       + ", ".join(f"`{f}`" for f in self.unknown_files))
+        out.append(f"- Depth: {self.depth}")
+        out.append(f"- Graph state: {self.graph_state}")
+
+        out += ["", "## Symbols"]
+        out += [f"- `{s.label}` ({s.role}) {s.file}:{s.line}" for s in self.symbols] or ["- none"]
+
+        out += ["", "## Callers"]
+        any_callers = False
+        for hop, cs in sorted(self.callers.items()):
+            for c in cs:
+                any_callers = True
+                out.append(f"- hop {hop}: `{c.symbol}` in {c.file} ({c.relation})")
+        if not any_callers:
+            out.append("- none")
+
+        out += ["", "## Dependent modules"]
+        out += [f"- {m['file']} (hop {m['hop']})" for m in self.dependent_modules] or ["- none"]
+
+        out += ["", "## External contracts"]
+        out += [f"- `{c['label']}` in {c['file']}: used by {', '.join(c['consumers'])}"
+                for c in self.external_contracts] or ["- none"]
+
+        out += ["", "## Test coverage"]
+        out += [f"- {sid}: {', '.join(tests) if tests else 'NONE'}"
+                for sid, tests in sorted(self.test_coverage.items())] or ["- none"]
+
+        out += ["", "## Uncovered"]
+        out += [f"- {sid}" for sid in self.uncovered] or ["- none"]
+        return "\n".join(out) + "\n"
+
+
+class _Index:
+    def __init__(self, graph: dict):
+        self.nodes: dict[str, dict] = {n["id"]: n for n in graph.get("nodes", []) if "id" in n}
+        self.rev: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+        self.fwd: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+        containers: set[str] = set()
+        rationale: set[str] = set()
+        for e in graph.get("links", graph.get("edges", [])):
+            s, t, rel = e.get("source"), e.get("target"), str(e.get("relation", ""))
+            if s not in self.nodes or t not in self.nodes:
+                continue
+            efile = str(e.get("source_file") or self.nodes[s].get("source_file") or "")
+            self.rev[t].append((s, rel, efile))
+            self.fwd[s].append((t, rel, efile))
+            if rel == "contains":
+                containers.add(s)
+            elif rel == "rationale_for":
+                rationale.add(s)
+        self.rationale = rationale
+        self.file_nodes = {
+            nid for nid in containers
+            if (n := self.nodes[nid]).get("source_file")
+            and str(n.get("label", "")) in _file_labels(str(n["source_file"]))
+        }
+
+    def is_code(self, nid: str) -> bool:
+        n = self.nodes[nid]
+        return (bool(n.get("source_file")) and n.get("file_type") in (None, "", "code")
+                and nid not in self.rationale)
+
+    def is_symbol(self, nid: str) -> bool:
+        return self.is_code(nid) and nid not in self.file_nodes
+
+    def file_of(self, nid: str) -> str:
+        return str(self.nodes[nid].get("source_file") or "")
+
+    def symbol(self, nid: str, role: str) -> Symbol:
+        n = self.nodes[nid]
+        return Symbol(nid, str(n.get("label", nid)), self.file_of(nid), _line(n), role)
+
+
+def _file_labels(path: str) -> set[str]:
+    base = posixpath.basename(path)
+    return {path, base, posixpath.splitext(base)[0]}
+
+
+def _line(node: dict) -> int:
+    loc = str(node.get("source_location") or "")
+    digits = loc.lstrip("Ll")
+    head = ""
+    for ch in digits:
+        if not ch.isdigit():
+            break
+        head += ch
+    return int(head) if head else 0
+
+
+def _normalize_files(root: Path, files) -> list[str]:
+    roots = {str(root), str(root.resolve())}
+    out: set[str] = set()
+    for raw in files:
+        f = str(raw).replace("\\", "/")
+        if posixpath.isabs(f):
+            for r in roots:
+                r = r.replace("\\", "/").rstrip("/")
+                if f.startswith(r + "/"):
+                    f = f[len(r) + 1:]
+                    break
+        f = posixpath.normpath(f)
+        if f and f != ".":
+            out.add(f)
+    return sorted(out)
+
+
+def _index(root: Path) -> _Index:
+    g = load_graph(root)
+    if g is None:
+        raise GraphUnavailable(f"no readable graph at {graph_path(root)}")
+    return _Index(g)
+
+
+def _symbols(ix: _Index, files: list[str]) -> SymbolList:
+    wanted = set(files)
+    found: dict[str, Symbol] = {}
+    known: set[str] = set()
+    for nid in ix.nodes:
+        f = ix.file_of(nid)
+        if f in wanted:
+            known.add(f)
+            if ix.is_symbol(nid):
+                found[nid] = ix.symbol(nid, "defined")
+    for nid in list(ix.nodes):
+        for tgt, _rel, efile in ix.fwd.get(nid, ()):
+            if efile in wanted and tgt not in found and ix.is_symbol(tgt) \
+                    and ix.file_of(tgt) not in wanted:
+                found[tgt] = ix.symbol(tgt, "touched")
+    ordered = sorted(found.values(), key=lambda s: (s.file, s.line, s.label, s.id))
+    return SymbolList(ordered, [f for f in files if f not in known])
+
+
+def symbols_for_files(root: Path, files) -> SymbolList:
+    """Symbols defined in (or touched by) the given files. Unknown files go to `.unknown_files`."""
+    return _symbols(_index(root), _normalize_files(root, files))
+
+
+def _reverse_bfs(ix: _Index, seeds: set[str], depth: int, skip: set[str]) -> dict[str, tuple[int, str]]:
+    """node -> (shortest hop, relation) over inbound CALLER_RELATIONS edges. Seeds excluded."""
+    seen = set(seeds) | skip
+    best: dict[str, tuple[int, str]] = {}
+    frontier = sorted(seeds)
+    for hop in range(1, depth + 1):
+        found: dict[str, str] = {}
+        for nid in frontier:
+            for src, rel, _ in ix.rev.get(nid, ()):
+                if (rel in CALLER_RELATIONS and src not in seen and ix.is_code(src)
+                        and (src not in found or rel < found[src])):
+                    found[src] = rel
+        for src, rel in found.items():
+            best[src] = (hop, rel)
+        seen.update(found)
+        frontier = sorted(found)
+        if not frontier:
+            break
+    return best
+
+
+def _blast(ix: _Index, files: list[str], depth: int) -> BlastRadius:
+    if depth < 1:
+        raise ValueError("depth must be >= 1")
+    syms = _symbols(ix, files)
+    wanted = set(files)
+    defined = {s.id for s in syms if s.role == "defined"}
+    in_files = {nid for nid in ix.nodes if ix.file_of(nid) in wanted}
+    reached = _reverse_bfs(ix, defined, depth, in_files)
+
+    callers: dict[int, list[Caller]] = {h: [] for h in range(1, depth + 1)}
+    for nid, (hop, rel) in reached.items():
+        n = ix.nodes[nid]
+        callers[hop].append(Caller(nid, str(n.get("label", nid)), ix.file_of(nid), hop, rel))
+    for cs in callers.values():
+        cs.sort(key=lambda c: (c.file, c.symbol, c.id))
+
+    mods: dict[str, int] = {}
+    for hop, cs in callers.items():
+        for c in cs:
+            if c.file not in wanted:
+                mods[c.file] = min(hop, mods.get(c.file, hop))
+    for tgt, edges in ix.rev.items():
+        if ix.file_of(tgt) in wanted:
+            for src, rel, efile in edges:
+                f = ix.file_of(src) or efile
+                if rel in IMPORT_RELATIONS and f and f not in wanted and src not in ix.rationale:
+                    mods[f] = 1
+
+    contracts = []
+    for s in syms:
+        if s.role != "defined" or s.label.lstrip(".").startswith("_"):
+            continue
+        consumers = {
+            ix.file_of(src) for src, rel, _ in ix.rev.get(s.id, ())
+            if rel in CONSUMER_RELATIONS and src in ix.nodes and ix.is_code(src)
+            and ix.file_of(src) != s.file
+        }
+        if consumers:
+            contracts.append({"id": s.id, "label": s.label, "file": s.file,
+                              "consumers": sorted(consumers)})
+
+    return BlastRadius(
+        files=files, unknown_files=list(syms.unknown_files), depth=depth, symbols=list(syms),
+        callers=callers,
+        dependent_modules=[{"file": f, "hop": h} for f, h in sorted(mods.items())],
+        external_contracts=contracts,
+    )
+
+
+def blast_radius(root: Path, files, depth: int = 2) -> BlastRadius:
+    """Callers of the modified files' symbols by hop, dependent modules and external contracts."""
+    if depth < 1:
+        raise ValueError("depth must be >= 1")
+    return _blast(_index(root), _normalize_files(root, files), depth)
+
+
+def _is_test_file(path: str) -> bool:
+    parts = path.split("/")
+    name = parts[-1]
+    return (any(p in ("tests", "test") for p in parts[:-1])
+            or (name.startswith("test_") and name.endswith(".py"))
+            or name.endswith("_test.py"))
+
+
+def _coverage(ix: _Index, ids: list[str], modified: set[str]) -> dict[str, list[str]]:
+    modified_tests = {f for f in modified if _is_test_file(f)}
+    out: dict[str, list[str]] = {}
+    for sid in ids:
+        tests = set(modified_tests)
+        if sid in ix.nodes:
+            for nid in _reverse_bfs(ix, {sid}, TEST_HOPS, set()):
+                f = ix.file_of(nid)
+                if _is_test_file(f):
+                    tests.add(f)
+            if _is_test_file(ix.file_of(sid)):
+                tests.add(ix.file_of(sid))
+        out[sid] = sorted(tests)
+    return out
+
+
+def test_coverage_map(root: Path, symbols, files=()) -> dict[str, list[str]]:
+    """symbol id -> sorted test files reaching it within 2 hops (or modified test files)."""
+    ids = sorted({s.id if hasattr(s, "id") else str(s) for s in symbols})
+    return _coverage(_index(root), ids, set(_normalize_files(root, files)))
+
+
+test_coverage_map.__test__ = False  # not a pytest test, despite the name
+
+
+def impact(root: Path, files, depth: int = 2) -> ImpactReport:
+    """Compose symbols, blast radius and test coverage into one deterministic report."""
+    if depth < 1:
+        raise ValueError("depth must be >= 1")
+    ix = _index(root)
+    norm = _normalize_files(root, files)
+    b = _blast(ix, norm, depth)
+    ids = sorted(s.id for s in b.symbols if s.role == "defined")
+    cov = _coverage(ix, ids, set(norm))
+    return ImpactReport(
+        files=b.files, unknown_files=b.unknown_files, depth=depth,
+        graph_state=graph_freshness(root), symbols=b.symbols, callers=b.callers,
+        dependent_modules=b.dependent_modules, external_contracts=b.external_contracts,
+        test_coverage=cov, uncovered=[i for i in ids if not cov[i]],
     )

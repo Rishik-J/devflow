@@ -241,6 +241,7 @@ Graphify builds a graph on first use in each checkout. The engine checks freshne
 devflow graph status
 devflow graph refresh
 devflow graph context --files src/example.py
+devflow graph impact src/example.py --depth 2 --format json
 
 devflow learn list
 devflow learn retro 12
@@ -248,6 +249,8 @@ devflow learn approve L-xxxxxxxx
 devflow learn reject L-xxxxxxxx
 devflow learn publish
 ```
+
+`graph impact` is deterministic and makes no LLM calls. Its report has the keys `files`, `unknown_files`, `depth`, `graph_state`, `symbols`, `callers` (by hop), `dependent_modules`, `external_contracts`, `test_coverage` and `uncovered`.
 
 Agent lessons begin as candidates. They become active after independent evidence from two tickets, or explicit human approval. Active lessons are selected by role and file scope for later prompts. Publishing opens a context-update PR containing only the repo brief and lesson ledger.
 
