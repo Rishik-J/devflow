@@ -154,6 +154,24 @@ def report_stall(info: dict) -> None:
           f"{info['p99']}s across {info['samples']} prior runs", file=sys.stderr)
 
 
+def report_graph_staleness(info: dict) -> None:
+    """Emit the graph.stale event and one stderr warning for a stale or unbuilt graph."""
+    with suppress(Exception):  # best effort; must never affect the workflow
+        status = _valid("staleness", info.get("status"))
+        if status not in ("stale", "unbuilt"):
+            return
+        attrs = {"devflow.graph.status": status,
+                 "devflow.graph.fingerprint": _valid("fingerprint", info.get("fingerprint", "")) or "",
+                 "devflow.graph.stored_fingerprint": _valid("fingerprint", info.get("stored", "")) or ""}
+        age = info.get("age_seconds")
+        if status != "unbuilt" and _count(age):
+            attrs["devflow.graph.age_seconds"] = age
+        with suppress(Exception):
+            event("graph.stale", **attrs)
+        print(f"devflow: graph warning: code graph was {status} when planning began; the planner "
+              "may see obsolete or missing symbols (the engine refreshes it next)", file=sys.stderr)
+
+
 def _attribute(key, value):
     kind = "boolValue" if isinstance(value, bool) else "intValue" if isinstance(value, int) else "doubleValue" if isinstance(value, float) else "stringValue"
     return {"key": key, "value": {kind: str(value) if kind == "intValue" else value}}
@@ -252,6 +270,8 @@ def _valid(key: str, value):
         return None
     if key == "status":
         return value if value in GRAPH_STATES else None
+    if key == "staleness":
+        return value if value in ("fresh", "stale", "unbuilt") else None
     if key in ("nodes", "edges"):
         return value if _count(value) else None
     if key == "refreshed":
@@ -276,7 +296,8 @@ def annotate(**attrs) -> None:
 
 
 _TRACE_KEYS = {"base_sha": "base_sha", "remote": "remote", "graph_status": "status",
-               "graph_fingerprint": "fingerprint", "graph_nodes": "nodes", "graph_edges": "edges"}
+               "graph_fingerprint": "fingerprint", "graph_nodes": "nodes", "graph_edges": "edges",
+               "graph_staleness": "staleness"}
 
 
 def trace_metadata(**values) -> None:

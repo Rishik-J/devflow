@@ -1,6 +1,7 @@
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -396,7 +397,7 @@ def test_trace_metadata_validates_on_root(capture):
     assert attrs["langfuse.trace.metadata.base_sha"] == "deadbeef"
     assert attrs["devflow.graph_fingerprint"] == "f" * 12
     allowed = {"base_sha", "remote", "graph_status", "graph_fingerprint", "graph_nodes", "graph_edges",
-               "repo", "issue"}
+               "graph_staleness", "repo", "issue"}
     assert {k.rsplit(".", 1)[1] for k in attrs if k.startswith("langfuse.trace.metadata.")} <= allowed
     assert "leak" not in capture.read_text()
 
@@ -686,7 +687,6 @@ def test_full_lifecycle_traces_span_three_invocations_with_consistent_parentage(
 
 import copy
 import random
-from pathlib import Path
 
 from devflow.tracecheck import REQUIRED_STAGES, check_trace_completeness
 
@@ -903,3 +903,198 @@ def test_ci_workflow_and_docs_reflect_trace_gate():
     out = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-k", "trace_completeness",
                           str(REPO / "tests/test_telemetry.py")], capture_output=True, text=True, check=False).stdout
     assert "test_trace_completeness_full_lifecycle_has_no_violations" in out
+
+
+# ---- graph staleness warning ----------------------------------------------------------------
+
+from devflow import graphctx
+
+
+def _events(path, name):
+    return [r["attributes"] for r in rows(path) if r["name"] == name]
+
+
+def test_report_graph_staleness_event_and_stderr(capture, capsys):
+    with telemetry.span("probe"):
+        telemetry.report_graph_staleness({"status": "stale", "fingerprint": "a" * 40,
+                                          "stored": "b" * 40, "age_seconds": 7})
+        telemetry.report_graph_staleness({"status": "unbuilt", "fingerprint": "a" * 40,
+                                          "stored": "", "age_seconds": None})
+        telemetry.report_graph_staleness({"status": "fresh", "fingerprint": "a" * 40})
+        telemetry.report_graph_staleness({"status": "bogus/path"})
+    stale, unbuilt = _events(capture, "graph.stale")
+    assert stale["devflow.graph.status"] == "stale"
+    assert stale["devflow.graph.fingerprint"] == "a" * 12
+    assert stale["devflow.graph.stored_fingerprint"] == "b" * 12
+    assert stale["devflow.graph.age_seconds"] == 7
+    assert unbuilt["devflow.graph.status"] == "unbuilt"
+    assert unbuilt["devflow.graph.stored_fingerprint"] == ""
+    assert "devflow.graph.age_seconds" not in unbuilt
+    allowed = {"devflow.graph.status", "devflow.graph.fingerprint",
+               "devflow.graph.stored_fingerprint", "devflow.graph.age_seconds"}
+    for attrs in (stale, unbuilt):
+        assert {k for k in attrs if k.startswith("devflow.")} <= allowed
+    err = capsys.readouterr().err.splitlines()
+    assert len(err) == 2 and all(line.startswith("devflow: graph warning:") for line in err)
+    assert "stale" in err[0] and "unbuilt" in err[1] and "obsolete or missing symbols" in err[0]
+
+
+def test_report_graph_staleness_is_best_effort(capture, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("x")
+    monkeypatch.setattr(telemetry, "event", boom)
+    telemetry.report_graph_staleness({"status": "stale"})
+    monkeypatch.undo()
+    monkeypatch.setattr("builtins.print", boom)
+    telemetry.report_graph_staleness({"status": "stale"})
+
+
+def test_graph_staleness_metadata_is_validated(capture):
+    class Cfg:
+        name = "t"
+
+    class Eng:
+        cfg = Cfg()
+
+        @telemetry.ticket_run
+        def run(self, issue):
+            for bad in ("bogus", "", None, "/etc/passwd"):
+                telemetry.trace_metadata(graph_staleness=bad)
+            from types import SimpleNamespace
+            assert "devflow.graph_staleness" not in telemetry._root.get().attributes
+            telemetry.trace_metadata(graph_staleness="unbuilt")
+            return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    Eng().run(1)
+    attrs = root_of(capture)
+    assert attrs["devflow.graph_staleness"] == "unbuilt"
+    assert attrs["langfuse.trace.metadata.graph_staleness"] == "unbuilt"
+
+
+def test_observability_docs_cover_graph_staleness():
+    doc = (Path(__file__).parent.parent / "docs" / "observability.md").read_text()
+    for needle in ("`graph.stale`", "graph_staleness", "**fresh**", "**stale**", "**unbuilt**",
+                   "devflow.graph.status", "devflow.graph.fingerprint",
+                   "devflow.graph.stored_fingerprint", "devflow.graph.age_seconds"):
+        assert needle in doc
+
+
+def _planner_env(tmp_path, builder, built=False):
+    env = Env(tmp_path / "ticket")
+    engine = env.engine()
+    engine.graph_builder = builder
+    if built:
+        graphctx.ensure_fresh(env.repo, builder=builder)
+    return env, engine
+
+
+def _good_builder(calls):
+    def builder(root):
+        calls.append(root)
+        out = root / "graphify-out"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "graph.json").write_text(json.dumps({"nodes": [{"id": "a"}], "links": []}))
+        return GraphResult(True, True, nodes=1, edges=0)
+    return builder
+
+
+def _request_as(env, engine, role):
+    @telemetry.ticket_run
+    def run(self, issue):
+        engine._request(None, role, "p", schema=None, read_only=True, cwd=env.repo)
+        from types import SimpleNamespace
+        return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    run(engine, 1)
+
+
+def test_planner_request_fresh_graph_is_silent(capture, tmp_path, capsys):
+    env, engine = _planner_env(tmp_path, _good_builder([]), built=True)
+    try:
+        _request_as(env, engine, "planner")
+        assert not _events(capture, "graph.stale")
+        assert "graph warning" not in capsys.readouterr().err
+        assert root_of(capture)["devflow.graph_staleness"] == "fresh"
+    finally:
+        env.store.close()
+
+
+def test_planner_request_stale_graph_warns_once_then_refreshes(capture, tmp_path, capsys):
+    calls = []
+    env, engine = _planner_env(tmp_path, _good_builder(calls), built=True)
+    (env.repo / "src" / "calc.py").write_text("def add(a, b):\n    return b + a\n")
+    try:
+        _request_as(env, engine, "planner")
+        events = _events(capture, "graph.stale")
+        assert len(events) == 1 and events[0]["devflow.graph.status"] == "stale"
+        assert capsys.readouterr().err.count("devflow: graph warning:") == 1
+        attrs = root_of(capture)
+        assert attrs["devflow.graph_staleness"] == "stale"
+        assert attrs["devflow.graph_status"] == "refreshed" and len(calls) == 2
+        assert graph_spans(capture)[-1]["devflow.graph.status"] == "refreshed"
+    finally:
+        env.store.close()
+
+
+@pytest.mark.parametrize("mode,status", [("ok", "refreshed"), ("fail", "unavailable"),
+                                         ("none", "unavailable")])
+def test_planner_request_unbuilt_graph_warns_whatever_the_builder_does(capture, tmp_path, capsys,
+                                                                       mode, status):
+    def failing(root):
+        raise RuntimeError("nope")
+    builder = {"ok": _good_builder([]), "fail": failing, "none": None}[mode]
+    env, engine = _planner_env(tmp_path, builder)
+    try:
+        _request_as(env, engine, "planner")
+        (event,) = _events(capture, "graph.stale")
+        assert event["devflow.graph.status"] == "unbuilt"
+        assert event["devflow.graph.stored_fingerprint"] == ""
+        assert "devflow.graph.age_seconds" not in event
+        attrs = root_of(capture)
+        assert attrs["devflow.graph_staleness"] == "unbuilt"
+        assert attrs["devflow.graph_status"] == status
+        assert "devflow: graph warning:" in capsys.readouterr().err
+    finally:
+        env.store.close()
+
+
+@pytest.mark.parametrize("role", ["reviewer", "coder"])
+def test_non_planner_roles_do_not_warn(capture, tmp_path, capsys, role):
+    env, engine = _planner_env(tmp_path, _good_builder([]))
+    try:
+        _request_as(env, engine, role)
+        assert not _events(capture, "graph.stale")
+        assert "graph warning" not in capsys.readouterr().err
+        assert "devflow.graph_staleness" not in root_of(capture)
+    finally:
+        env.store.close()
+
+
+@pytest.mark.parametrize("target", ["freshness", "report"])
+def test_staleness_check_failures_never_block_the_request(capture, tmp_path, monkeypatch, target):
+    def boom(*a, **k):
+        raise RuntimeError("injected")
+    env, engine = _planner_env(tmp_path, _good_builder([]))
+    if target == "freshness":
+        monkeypatch.setattr(graphctx, "graph_freshness", boom)
+    else:
+        monkeypatch.setattr(telemetry, "report_graph_staleness", boom)
+    try:
+        _request_as(env, engine, "planner")
+        assert root_of(capture)["devflow.graph_status"] == "refreshed"
+    finally:
+        env.store.close()
+
+
+def test_staleness_check_runs_once_and_before_the_refresh(capture, tmp_path, monkeypatch):
+    order = []
+    real_fresh, real_refresh = graphctx.graph_freshness, None
+    env, engine = _planner_env(tmp_path, _good_builder([]))
+    real_refresh = engine._refresh_graph
+    monkeypatch.setattr(graphctx, "graph_freshness",
+                        lambda r: (order.append("check"), real_fresh(r))[1])
+    monkeypatch.setattr(engine, "_refresh_graph",
+                        lambda wt: (order.append("refresh"), real_refresh(wt))[1])
+    try:
+        _request_as(env, engine, "planner")
+        assert order == ["check", "refresh"]
+    finally:
+        env.store.close()

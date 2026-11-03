@@ -300,3 +300,75 @@ def test_fingerprint_write_failure_reports_failed_on_span(repo: Path, trace_log:
     assert attrs["devflow.graph.refreshed"] is False
     assert attrs["devflow.graph.nodes"] == 0 and len(attrs["devflow.graph.fingerprint"]) == 12
     assert "secret-path" not in trace_log.read_text() and "error.type" not in attrs
+
+
+# ---- graph_freshness (read-only staleness check) -------------------------------------------
+
+def _snapshot(root: Path):
+    out = root / "graphify-out"
+    files = {str(p.relative_to(out)): (p.read_bytes(), p.stat().st_mtime_ns)
+             for p in sorted(out.rglob("*")) if p.is_file()} if out.exists() else {}
+    return files, git(root, "status", "--porcelain"), git(root, "rev-parse", "HEAD")
+
+
+def test_freshness_unbuilt_fresh_and_stale_states(repo: Path):
+    assert graphctx.graph_freshness(repo) == "unbuilt"
+    b = Builder()
+    graphctx.ensure_fresh(repo, builder=b)
+    assert graphctx.graph_freshness(repo) == "fresh"
+    (repo / "src" / "calc.py").write_text("def add(a, b):\n    return b + a\n")
+    assert graphctx.graph_freshness(repo) == "stale"
+    commit_all(repo, "next")
+    assert graphctx.graph_freshness(repo) == "stale"
+    git(repo, "reset", "-q", "--hard", "HEAD")
+    graphctx.ensure_fresh(repo, builder=b, force=True)
+    (repo / "src" / "new.py").write_text("x = 1\n")
+    assert graphctx.graph_freshness(repo) == "stale"
+
+
+def test_freshness_stale_when_fingerprint_missing_or_different(repo: Path):
+    graphctx.ensure_fresh(repo, builder=Builder())
+    fp = repo / "graphify-out" / graphctx.FINGERPRINT_FILE
+    fp.write_text("deadbeef")
+    assert graphctx.graph_freshness(repo) == "stale"
+    fp.unlink()
+    assert graphctx.graph_freshness(repo) == "stale"
+
+
+def test_freshness_is_read_only_and_never_builds(repo: Path):
+    b = Builder()
+    before = _snapshot(repo)
+    assert graphctx.graph_freshness(repo) == "unbuilt"
+    assert _snapshot(repo) == before
+    graphctx.ensure_fresh(repo, builder=b)
+    before = _snapshot(repo)
+    assert graphctx.graph_freshness(repo) == "fresh"
+    (repo / "src" / "calc.py").write_text("def add(a, b):\n    return b + a\n")
+    before = _snapshot(repo)
+    assert graphctx.graph_freshness(repo) == "stale"
+    assert _snapshot(repo) == before and b.calls == 1
+
+
+def test_freshness_never_raises(tmp_path: Path, repo: Path, monkeypatch):
+    assert graphctx.graph_freshness(tmp_path) == "unbuilt"
+    write_graph(tmp_path, [node("a", "A", "x.py")], [])
+    assert graphctx.graph_freshness(tmp_path) == "stale"
+    graphctx.ensure_fresh(repo, builder=Builder())
+
+    def boom(root):
+        raise RuntimeError("git exploded")
+    monkeypatch.setattr(graphctx, "fingerprint", boom)
+    assert graphctx.graph_freshness(repo) == "stale"
+    assert graphctx.graph_freshness(tmp_path / "missing") == "unbuilt"
+
+
+def test_graph_age_comes_from_mtime_and_does_not_decide_freshness(repo: Path):
+    import os
+    import time
+    assert graphctx.graph_age_seconds(repo) is None
+    graphctx.ensure_fresh(repo, builder=Builder())
+    old = time.time() - 5000
+    os.utime(graphctx.graph_path(repo), (old, old))
+    age = graphctx.graph_age_seconds(repo)
+    assert isinstance(age, int) and 4990 <= age <= 5100
+    assert graphctx.graph_freshness(repo) == "fresh"
