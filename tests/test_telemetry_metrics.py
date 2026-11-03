@@ -1,9 +1,10 @@
+import inspect
 import json
 
 import pytest
 
 from devflow.cli import main
-from devflow.telemetry_cli import LABELS, issue_summary
+from devflow.telemetry_cli import LABELS, aggregate, issue_summary
 from tests.conftest import git_init
 
 S = 1_000_000_000
@@ -171,3 +172,83 @@ def test_non_finite_timestamps_yield_strict_json(tmp_path, capsys):
     (session,) = data["sessions"]
     assert session["runs"] == 2 and session["active_run_seconds"] == 10.0
     assert session["stage_latency_seconds"] == {}
+
+
+def strict_loads(text):
+    return json.loads(text, parse_constant=lambda c: pytest.fail(c))
+
+
+def plain(tmp_path, capsys, records=None, raw=None):
+    code, out = run_metrics(tmp_path, capsys, records, raw=raw)
+    assert code == 0
+    return strict_loads(out.out)
+
+
+def test_plain_non_object_lines_ignored(tmp_path, capsys):
+    good = [span("ticket.run", 0, 10, **{"devflow.result": "done"}), span("stage.plan", 0, 2)]
+    raw = ["[1, 2]", "42", '"str"', "null", "true"] + [json.dumps(r) for r in good]
+    data = plain(tmp_path, capsys, raw=raw)
+    assert data == plain(tmp_path / "g", capsys, good)
+    assert data["spans"] == 2 and data["ticket_turn_outcomes"] == {"done": 1}
+    only = plain(tmp_path / "o", capsys, raw=["[1, 2]", "42", "null"])
+    assert only["spans"] == 0 and only["stage_latency_seconds"] == {} and only["ticket_turn_outcomes"] == {}
+
+
+def test_plain_incomplete_objects(tmp_path, capsys):
+    bad = [{"start_ns": 0, "end_ns": S, "attributes": {"devflow.result": "x"}},
+           {"name": "ticket.run"}, {"name": "stage.plan", "attributes": "s", "start_ns": 0, "end_ns": S},
+           {"name": "agent.x", "attributes": [1]}, {"name": "usage.recorded", "attributes": None}]
+    data = plain(tmp_path, capsys, bad + [span("stage.plan", 0, 2)])
+    assert data["spans"] == 6
+    assert data["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 1.5, "max": 2.0}}
+    assert data["agent_cli_calls"] == {"unknown": 1}
+    assert data["ticket_turn_outcomes"] == {"None": 1}
+
+
+def test_plain_bad_stage_timestamps(tmp_path, capsys):
+    base = {"name": "stage.plan", "attributes": {}}
+    raw = [json.dumps({**base, "start_ns": "x", "end_ns": 5}), json.dumps(base),
+           json.dumps({**base, "start_ns": 5 * S, "end_ns": S}),
+           '{"name": "stage.plan", "start_ns": NaN, "end_ns": 5}',
+           '{"name": "stage.plan", "start_ns": 0, "end_ns": 1e309}',
+           json.dumps({**base, "start_ns": 3, "end_ns": 3}), json.dumps(span("stage.plan", 0, 4))]
+    data = plain(tmp_path, capsys, raw=raw)
+    assert data["stage_latency_seconds"] == {"stage.plan": {"count": 2, "mean": 2.0, "max": 4.0}}
+
+
+def test_plain_bad_costs(tmp_path, capsys):
+    def usage(cost):
+        return span("usage.recorded", **{"devflow.agent": "a", "devflow.cost_usd": cost})
+    raw = [json.dumps(usage(c)) for c in ("1", True, False, 1, 0.5)]
+    raw += ['{"name": "usage.recorded", "attributes": {"devflow.agent": "a", "devflow.cost_usd": NaN}}',
+            '{"name": "usage.recorded", "attributes": {"devflow.agent": "a", "devflow.cost_usd": 1e309}}']
+    assert plain(tmp_path, capsys, raw=raw)["coding_cost_usd_recorded"] == {"a": 1.5}
+    allbad = plain(tmp_path / "b", capsys, [usage("x"), usage(True)])
+    assert allbad["coding_cost_usd_recorded"] == {"a": 0}
+
+
+def test_plain_odd_keys_match_issue_mode(tmp_path, capsys):
+    records = [span("ticket.run", **{"devflow.result": ["a"]}),
+               span("ticket.run", **{"devflow.result": {"k": 1}}),
+               span("ticket.run", status=None),
+               span("agent.x", **{"devflow.agent": ["a"]}), span("agent.y", **{"devflow.agent": {"k": 1}}),
+               span("usage.recorded", **{"devflow.agent": ["a"], "devflow.cost_usd": 1})]
+    data = plain(tmp_path, capsys, records)
+    assert data["ticket_turn_outcomes"] == {"['a']": 1, "{'k': 1}": 1, "None": 1}
+    assert data["agent_cli_calls"] == {"['a']": 1, "{'k': 1}": 1}
+    assert data["coding_cost_usd_recorded"] == {"['a']": 1}
+    issue = strict_loads(run_metrics(tmp_path / "i", capsys, records, "--issue", "1")[1].out)
+    assert issue["ticket_turn_outcomes"] == data["ticket_turn_outcomes"]
+
+
+def test_plain_synthetic_with_non_object(tmp_path, capsys):
+    raw = ["[1]", json.dumps(span("ticket.run", **{"langfuse.trace.metadata.synthetic": "true"})),
+           json.dumps(span("ticket.run"))]
+    data = plain(tmp_path, capsys, raw=raw)
+    assert data["spans"] == 2 and data["synthetic_spans_excluded"] == 1
+    assert data["ticket_turn_outcomes"] == {"ok": 1}
+
+
+def test_aggregate_has_no_strict_mode():
+    assert "strict" not in inspect.signature(aggregate).parameters
+    assert isinstance(aggregate([1, None, [], {"name": 3}, {"attributes": 5}]), dict)

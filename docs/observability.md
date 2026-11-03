@@ -158,7 +158,8 @@ devflow stats
 ```
 
 `telemetry metrics` summarizes the local span log: stage mean/max latency, CLI call counts,
-recorded coding cost and ticket-turn outcomes. It excludes synthetic demo spans. `stats` reads
+recorded coding cost and ticket-turn outcomes. It excludes synthetic demo spans. Malformed, non-object or incomplete trace lines are ignored
+for the aggregates and are not counted in `spans`. `stats` reads
 the durable workflow database and summarizes tickets, reviews and lessons. Neither command
 requires a model call.
 
