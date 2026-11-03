@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 678" role="img" aria-labelledby="title description">
+  <title id="title">Repository graph and workflow trace</title>
+  <desc id="description">Illustrative Graphify relationships among source and test files above a Langfuse timeline of plan, build, verification and review spans. No measurements are shown.</desc>
+  <style>.m{font-family:ui-monospace,Menlo,Consolas,monospace}.s{font-family:system-ui,-apple-system,sans-serif}.g{font-family:Georgia,serif}</style>
+  <rect width="360" height="678" fill="#f6efdd"/>
+  <path d="M1.5 1.5H358.5V676.5H1.5Z" fill="none" stroke="#0e1b33" stroke-width="3"/>
+  <path d="M2 45H358M2 340H358" stroke="#0e1b33" stroke-width="2"/>
+  <text x="18" y="29" class="m" font-size="12" letter-spacing="1.1" font-weight="700" fill="#0e1b33">PLATE 02 / EVIDENCE</text>
+  <text x="18" y="72" class="m" font-size="11" letter-spacing="1.2" font-weight="700" fill="#1f4fd8">A · GRAPHIFY / LOCAL CONTEXT</text>
+  <text x="18" y="102" class="g" font-size="21" font-weight="700" fill="#0e1b33">Files in relationship.</text>
+  <g stroke="#4a5670" stroke-width="1.8" fill="none">
+    <path d="M180 196L68 155M180 196L288 153M180 196L72 272M180 196L276 269M180 196L180 285"/>
+  </g>
+  <g fill="#fffaf0" stroke="#0e1b33" stroke-width="2"><circle cx="68" cy="155" r="10"/><circle cx="288" cy="153" r="10"/><circle cx="72" cy="272" r="10"/><circle cx="276" cy="269" r="10"/><circle cx="180" cy="285" r="10"/></g>
+  <circle cx="180" cy="196" r="24" fill="#b92d14" stroke="#0e1b33" stroke-width="2"/>
+  <circle cx="180" cy="196" r="11" fill="none" stroke="#fffaf0" stroke-width="2"/>
+  <g class="m" font-size="10" fill="#0e1b33" text-anchor="middle"><text x="68" y="139">router</text><text x="288" y="137">test</text><text x="72" y="300">api</text><text x="276" y="297">config</text><text x="180" y="312">models</text></g>
+  <text x="180" y="233" text-anchor="middle" class="m" font-size="11" font-weight="700" fill="#b92d14">CHANGED FILE</text>
+  <text x="18" y="327" class="s" font-size="11" fill="#4a5670">Illustrative nodes · relationships from a local graph</text>
+
+  <text x="18" y="367" class="m" font-size="11" letter-spacing="1.2" font-weight="700" fill="#1f4fd8">B · LANGFUSE / LOCAL TRACE</text>
+  <text x="18" y="396" class="g" font-size="21" font-weight="700" fill="#0e1b33">Handoffs in order.</text>
+  <g stroke="#0e1b33" stroke-opacity=".18"><path d="M18 423H342M18 469H342M18 515H342M18 561H342M18 607H342"/></g>
+  <g class="m" font-size="11" fill="#0e1b33"><text x="18" y="443">plan</text><text x="18" y="489">build</text><text x="18" y="535">gate</text><text x="18" y="581">review</text></g>
+  <g fill="#1f4fd8"><rect x="95" y="429" width="111" height="14"/><rect x="123" y="475" width="182" height="14"/><rect x="123" y="521" width="94" height="14"/><rect x="231" y="567" width="74" height="14"/></g>
+  <path d="M95 456H123M123 502V517M217 548H231" stroke="#b92d14" stroke-width="2"/>
+  <g fill="#b92d14"><circle cx="95" cy="456" r="3"/><circle cx="123" cy="502" r="3"/><circle cx="217" cy="548" r="3"/></g>
+  <rect x="18" y="625" width="324" height="37" fill="#0e1b33"/>
+  <text x="30" y="648" class="m" font-size="11" fill="#fffaf0">ILLUSTRATIVE · NO REAL MEASUREMENTS</text>
+</svg>

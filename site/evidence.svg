@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="t d">
+  <title id="t">Graphify code graph beside a Langfuse trace of a devflow ticket</title>
+  <desc id="d">Left: an illustrative Graphify graph of source and test files with a changed file highlighted. Right: an illustrative Langfuse trace waterfall listing devflow span names such as ticket.run, graph.refresh, agent, schema.repair, gate.result and usage.recorded. No real measurements are shown.</desc>
+  <style>
+    .serif{font-family:Georgia,"Iowan Old Style","Palatino Linotype",serif}
+    .mono{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+    .sans{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    .ink{fill:#0e1b33}.cobalt{fill:#1f4fd8}.verm{fill:#b92d14}.mute{fill:#4a5670}
+    .pulse{opacity:.25}
+  </style>
+
+  <rect width="1280" height="720" fill="#f6efdd"/>
+  <rect x="12" y="12" width="1256" height="696" fill="none" stroke="#0e1b33" stroke-width="3"/>
+  <path d="M12 72H1268M640 72V708" stroke="#0e1b33" stroke-width="3"/>
+
+  <!-- LEFT: Graphify -->
+  <text x="40" y="49" class="mono ink" font-size="15" letter-spacing="2.4" font-weight="700">PLATE 02A · GRAPHIFY CODE GRAPH</text>
+  <text x="600" y="49" text-anchor="end" class="mono verm" font-size="15" letter-spacing="2.4" font-weight="700">ILLUSTRATIVE</text>
+  <text x="40" y="112" class="serif ink" font-size="26" font-weight="700">What the agent is told about the code</text>
+  <text x="40" y="138" class="sans mute" font-size="15">Local graph, changed-file relationships, per-role context.</text>
+
+  <g fill="none" stroke="#0e1b33" stroke-width="2">
+    <path class="edge" pathLength="1" d="M330 300L170 250"/>
+    <path class="edge" pathLength="1" d="M330 300L170 380"/>
+    <path class="edge" pathLength="1" d="M330 300L470 220"/>
+    <path class="edge" pathLength="1" d="M330 300L500 360"/>
+    <path class="edge" pathLength="1" d="M330 300L330 450"/>
+    <path class="edge" pathLength="1" d="M470 220L560 280"/>
+    <path class="edge" pathLength="1" d="M500 360L560 280"/>
+    <path class="edge" pathLength="1" d="M170 380L200 500"/>
+    <path class="edge" pathLength="1" d="M330 450L200 500"/>
+    <path class="edge" pathLength="1" d="M330 450L470 520"/>
+    <path class="edge" pathLength="1" d="M170 250L110 180"/>
+    <path class="edge" pathLength="1" d="M470 220L420 170"/>
+  </g>
+  <g fill="#fffaf0" stroke="#0e1b33" stroke-width="2.5">
+    <circle cx="170" cy="250" r="16"/><circle cx="170" cy="380" r="16"/><circle cx="470" cy="220" r="16"/>
+    <circle cx="500" cy="360" r="16"/><circle cx="560" cy="280" r="12"/><circle cx="330" cy="450" r="16"/>
+    <circle cx="200" cy="500" r="12"/><circle cx="470" cy="520" r="12"/><circle cx="110" cy="180" r="10"/><circle cx="420" cy="170" r="10"/>
+  </g>
+  <circle class="pulse" cx="330" cy="300" r="34" fill="#b92d14"/>
+  <circle cx="330" cy="300" r="24" fill="#b92d14" stroke="#0e1b33" stroke-width="3"/>
+  <g class="mono ink" font-size="13" font-weight="700">
+    <text x="330" y="262" text-anchor="middle" fill="#b92d14">health.py</text>
+    <text x="132" y="232" text-anchor="middle">routes</text>
+    <text x="150" y="412" text-anchor="middle">app</text>
+    <text x="470" y="196" text-anchor="middle">test_health</text>
+    <text x="520" y="394" text-anchor="middle">conftest</text>
+    <text x="356" y="486">config</text>
+    <text x="200" y="530" text-anchor="middle">models</text>
+  </g>
+  <g transform="translate(40 566)">
+    <circle cx="10" cy="-5" r="9" fill="#b92d14" stroke="#0e1b33" stroke-width="2"/>
+    <text x="30" y="0" class="sans ink" font-size="15">Changed file in the ticket</text>
+    <circle cx="10" cy="25" r="9" fill="#fffaf0" stroke="#0e1b33" stroke-width="2"/>
+    <text x="30" y="30" class="sans ink" font-size="15">Related file in the graph</text>
+  </g>
+  <rect x="40" y="628" width="560" height="48" fill="none" stroke="#0e1b33" stroke-width="1.5"/>
+  <text x="56" y="658" class="mono cobalt" font-size="15" font-weight="700">$ devflow graph context --files src/example.py</text>
+
+  <!-- RIGHT: Langfuse -->
+  <text x="680" y="49" class="mono ink" font-size="15" letter-spacing="2.4" font-weight="700">PLATE 02B · LANGFUSE TRACE</text>
+  <text x="1240" y="49" text-anchor="end" class="mono verm" font-size="15" letter-spacing="2.4" font-weight="700">ILLUSTRATIVE</text>
+  <text x="680" y="112" class="serif ink" font-size="26" font-weight="700">What happened, stage by stage</text>
+  <text x="680" y="138" class="sans mute" font-size="15">Span names as documented. Bars show shape, not measurements.</text>
+
+  <path d="M680 170H1240" stroke="#0e1b33" stroke-width="2"/>
+  <g class="mono ink" font-size="14" font-weight="700">
+    <text x="680" y="204">ticket.run</text>
+    <text x="700" y="256">graph.refresh</text>
+    <text x="700" y="308">routing.selected</text>
+    <text x="700" y="360">agent.&lt;driver&gt;.&lt;role&gt;</text>
+    <text x="700" y="412">schema.repair</text>
+    <text x="700" y="464">gate.result</text>
+    <text x="700" y="516">usage.recorded</text>
+    <text x="680" y="568">workflow.summary</text>
+  </g>
+  <g stroke="#0e1b33" stroke-opacity=".18">
+    <path d="M680 222H1240M680 274H1240M680 326H1240M680 378H1240M680 430H1240M680 482H1240M680 534H1240"/>
+  </g>
+  <g stroke="#0e1b33" stroke-opacity=".12" stroke-dasharray="3 6"><path d="M900 180V586M1070 180V586"/></g>
+  <rect class="bar b1" x="880" y="190" width="360" height="20" fill="#0e1b33"/>
+  <rect class="bar b2" x="884" y="242" width="66" height="20" fill="#1f4fd8"/>
+  <rect class="bar b3" x="950" y="294" width="40" height="20" fill="#1f4fd8"/>
+  <rect class="bar b4" x="994" y="346" width="190" height="20" fill="#1f4fd8"/>
+  <rect class="bar b5" x="1100" y="398" width="40" height="20" fill="#b92d14"/>
+  <rect class="bar b6" x="1146" y="450" width="64" height="20" fill="#1f4fd8"/>
+  <rect class="bar b7" x="1194" y="502" width="24" height="20" fill="#1f4fd8"/>
+  <rect class="bar b8" x="1210" y="554" width="30" height="20" fill="#0e1b33"/>
+
+  <path d="M680 604H1240" stroke="#0e1b33" stroke-width="2"/>
+  <text x="680" y="634" class="sans ink" font-size="15">Hand-offs, review rounds, gate output, recorded usage.</text>
+  <text x="680" y="658" class="sans ink" font-size="15">Local Langfuse at localhost:3300. Capture is opt-in.</text>
+  <text x="680" y="688" class="mono cobalt" font-size="15" font-weight="700">$ devflow telemetry metrics --issue 12</text>
+</svg>
