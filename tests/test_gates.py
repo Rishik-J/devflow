@@ -242,3 +242,13 @@ def test_gate_order_event_has_no_contents(tmp_path: Path):
     assert evs[0]["devflow.short_circuited"] is False and evs[0]["devflow.impacted_tests"] == 1
     assert evs[1]["devflow.priority_ran"] is False
     assert "output" not in json.dumps(evs)
+
+
+def test_priority_exit_5_is_inconclusive_and_full_suite_runs(tmp_path: Path):
+    cfg = _pytest_cfg(tmp_path, exit_code=5)
+    calls = []
+    report = run_gates(cfg, tmp_path, impacted_tests=["t_a.py"],
+                       priority_check=lambda r: calls.append(r) or True)
+    assert calls == [] and _log(tmp_path) == ["-q t_a.py", "-q"]
+    assert report.priority[0].ok is False and report.priority[0].exit_code == 5
+    assert len(report.results) == 1 and report.results[0].ok

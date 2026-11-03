@@ -215,7 +215,9 @@ def run_gates(
                         output_tail=out[-TAIL_CHARS:],
                     )
                     report.priority.append(prio)
-                    short = bool(not prio.ok and priority_check is not None and priority_check(prio))
+                    # pytest exit 5 means nothing was collected (deselected or empty): inconclusive.
+                    short = bool(not prio.ok and prio.exit_code != 5
+                                 and priority_check is not None and priority_check(prio))
                     telemetry.event("gate.order", **{
                         "devflow.gate": gate, "devflow.project": project.path,
                         "devflow.impacted_tests": len(impacted_tests or []),
