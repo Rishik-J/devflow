@@ -11,8 +11,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv run --no-project --with ruff ruff check .
       - run: uv run --no-project --with pytest --with-editable . python -m pytest -q
-      - name: Trace-completeness gate
-        run: uv run --no-project --with pytest --with-editable . python -m pytest tests/test_telemetry.py -k trace_completeness -q
   observability-image:
     runs-on: ubuntu-latest
     steps:
