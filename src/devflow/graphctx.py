@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
+import re
 import shutil
 import subprocess
 import time
@@ -631,3 +632,128 @@ def impact(root: Path, files, depth: int = 2) -> ImpactReport:
         dependent_modules=b.dependent_modules, external_contracts=b.external_contracts,
         test_coverage=cov, uncovered=[i for i in ids if not cov[i]],
     )
+
+
+# --------------------------------------------------------------------------------------------
+# Ticket ego-network slice: a small, bounded view of the graph around what a ticket mentions.
+# Ticket text is untrusted: it is only matched against graph labels and paths, never rendered.
+# --------------------------------------------------------------------------------------------
+
+SLICE_MAX_SEEDS = 8
+SLICE_HOP_CAP = 10  # nodes per seed, per direction, per hop
+SLICE_BUDGET_CHARS = 3000
+_TRUNC = "... (truncated)"
+_PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+|[\w\-]+\.[A-Za-z]{1,5}\b")
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+
+
+@dataclass(frozen=True)
+class SliceResult:
+    seeds: list[str]
+    nodes: int
+    text: str
+
+
+def _clean(value: object, limit: int = 80) -> str:
+    s = re.sub(r"[\s`]+", " ", str(value)).strip()
+    return s if len(s) <= limit else s[: limit - 3] + "..."
+
+
+def _sym_name(label: str) -> str:
+    return label.strip().lstrip(".").removesuffix("()").strip()
+
+
+def _slice_seeds(root: Path, ix: _Index, text: str) -> list[str]:
+    files: dict[str, str] = {}
+    for nid in ix.nodes:
+        f = ix.file_of(nid)
+        if f and ix.is_code(nid):
+            files[f] = f
+    names: dict[str, list[str]] = defaultdict(list)
+    for nid in ix.nodes:
+        if ix.is_symbol(nid):
+            names[_sym_name(str(ix.nodes[nid].get("label", "")))].append(nid)
+
+    seeds: set[str] = set()
+    rest = text
+    matched_files: list[str] = []
+    for tok in _PATH_RE.findall(text):
+        norm = _normalize_files(root, [tok.strip(".")])
+        if norm and norm[0] in files:
+            matched_files.append(norm[0])
+            rest = rest.replace(tok, " ")
+    if matched_files:
+        for s in _symbols(ix, sorted(set(matched_files))):
+            if s.role == "defined":
+                seeds.add(s.id)
+    for tok in _IDENT_RE.findall(rest):
+        parts = tok.split(".")
+        for cand in {tok, parts[-1], parts[0]}:
+            seeds.update(names.get(cand, ()))
+    order = sorted(seeds, key=lambda i: (ix.file_of(i), _line(ix.nodes[i]),
+                                         str(ix.nodes[i].get("label", "")), i))
+    return order[:SLICE_MAX_SEEDS]
+
+
+def _walk(ix: _Index, start: str, edges: dict, hops: int) -> list[tuple[int, str, str]]:
+    seen = {start}
+    frontier = [start]
+    out: list[tuple[int, str, str]] = []
+    for hop in range(1, hops + 1):
+        found: dict[str, str] = {}
+        for nid in frontier:
+            for other, rel, _ in edges.get(nid, ()):
+                if (other not in seen and other in ix.nodes and ix.is_code(other)
+                        and rel != "contains" and (other not in found or rel < found[other])):
+                    found[other] = rel
+        ranked = sorted(found, key=lambda i: (ix.file_of(i), _line(ix.nodes[i]),
+                                              str(ix.nodes[i].get("label", "")), i))[:SLICE_HOP_CAP]
+        seen.update(ranked)
+        out += [(hop, i, found[i]) for i in ranked]
+        frontier = ranked
+        if not frontier:
+            break
+    return out
+
+
+def _fmt(ix: _Index, nid: str, hop: int, rel: str) -> str:
+    n = ix.nodes[nid]
+    return (f"- {_clean(n.get('label', nid))} ({_clean(ix.file_of(nid), 120)}:{_line(n)}) "
+            f"via {_clean(rel, 30)}, hop {hop}")
+
+
+def ticket_slice(root: Path, text: str, *, hops: int = 2,
+                 budget_chars: int = SLICE_BUDGET_CHARS) -> SliceResult | None:
+    """1-2 hop ego network around the files/symbols a ticket names; None when nothing matches."""
+    try:
+        if not text or not text.strip():
+            return None
+        hops = max(1, min(2, int(hops)))
+        ix = _index(root)
+        seeds = _slice_seeds(root, ix, text)
+        if not seeds:
+            return None
+        tests = _coverage(ix, seeds, set())
+        lines: list[str] = []
+        seen_nodes: set[str] = set(seeds)
+        for sid in seeds:
+            n = ix.nodes[sid]
+            lines.append(f"### {_clean(n.get('label', sid))} "
+                         f"({_clean(ix.file_of(sid), 120)}:{_line(n)})")
+            callers = _walk(ix, sid, ix.rev, hops)
+            deps = _walk(ix, sid, ix.fwd, hops)
+            seen_nodes.update(i for _, i, _ in callers + deps)
+            lines.append("Callers (who is affected):")
+            lines += [_fmt(ix, i, h, r) for h, i, r in callers] or ["- none"]
+            lines.append("Dependencies:")
+            lines += [_fmt(ix, i, h, r) for h, i, r in deps] or ["- none"]
+            lines.append("Tests that exercise these:")
+            lines += [f"- {_clean(f, 120)}" for f in tests.get(sid, [])] or ["- none"]
+            lines.append("")
+        body = "\n".join(lines).rstrip()
+        if len(body) > budget_chars:
+            body = body[: max(0, budget_chars - len(_TRUNC) - 1)].rstrip() + "\n" + _TRUNC
+        labels = [_clean(ix.nodes[s].get("label", s)) for s in seeds]
+        return SliceResult(seeds=labels, nodes=len(seen_nodes), text=body)
+    except Exception:  # noqa: BLE001 - a slice is best effort and must never stop a ticket
+        return None

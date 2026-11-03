@@ -279,6 +279,7 @@ class Engine:
     def _request(
         self, ticket: Ticket, role: str, prompt: str, *, schema: str | None, read_only: bool,
         cwd: Path | None = None, files: list[str] | None = None, session: str | None = None,
+        slice_text: str | None = None,
     ) -> AgentRequest:
         wt = cwd or self._wt(ticket)
         if role == "planner":
@@ -286,6 +287,8 @@ class Engine:
         self._refresh_graph(wt)  # best effort; digest says if absent
         system = prompts.role_prompt(self.cfg.root, role) + "\n\n" + graphctx.agent_preamble(wt, files)
         system += self._context_for(ticket, role, files or [])
+        if role == "planner" and slice_text is not None:
+            system += self._ticket_slice(wt, slice_text)
         gates = {project.path: project.gates for project in self.cfg.projects}
         system += ("\n\n## Authoritative configured gates\n"
                    "These commands are loaded from the main checkout's .devflow/config.toml. "
@@ -298,6 +301,18 @@ class Engine:
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,
             mcp=graphctx.mcp_config(wt), mcp_overrides=graphctx.codex_overrides(wt),
         )
+
+    def _ticket_slice(self, wt: Path, text: str) -> str:
+        """The ego-network section for the planner prompt, or "" when no slice is available."""
+        result = None
+        with suppress(Exception):
+            result = graphctx.ticket_slice(wt, text)
+        if result is None:
+            telemetry.trace_metadata(slice_status="unavailable", slice_seeds=0, slice_nodes=0)
+            return ""
+        telemetry.trace_metadata(slice_status="injected", slice_seeds=len(result.seeds),
+                                 slice_nodes=result.nodes)
+        return f"\n\n{prompts.SLICE_HEADER}\n{result.text}\n\n{prompts.SLICE_GUIDANCE}"
 
     def _check_graph_staleness(self, wt: Path) -> None:
         """Warn (never block) when the graph is stale or unbuilt as planning begins."""
@@ -383,7 +398,8 @@ class Engine:
                             prompts.planner_task(
                                 issue, answers, feedback, previous.get("questions"),
                                 {project.path: project.gates for project in self.cfg.projects}),
-                            schema="plan", read_only=True)
+                            schema="plan", read_only=True,
+                            slice_text=f"{issue.title}\n\n{issue.body}")
         plan = self._plain("planner", req).data
         self._put(t, "plan", plan)
 

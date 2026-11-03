@@ -1098,3 +1098,108 @@ def test_staleness_check_runs_once_and_before_the_refresh(capture, tmp_path, mon
         assert order == ["check", "refresh"]
     finally:
         env.store.close()
+
+
+def test_slice_trace_keys_recorded_on_root(capture):
+    class Cfg:
+        name = "t"
+    class Eng:
+        cfg = Cfg()
+        @telemetry.ticket_run
+        def run(self, issue):
+            telemetry.trace_metadata(slice_status="injected", slice_seeds=3, slice_nodes=12,
+                                     base_sha="deadbeef")
+            from types import SimpleNamespace
+            return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    Eng().run(1)
+    attrs = root_of(capture)
+    assert attrs["devflow.slice_status"] == "injected"
+    assert attrs["devflow.slice_seeds"] == 3 and attrs["devflow.slice_nodes"] == 12
+    assert attrs["devflow.base_sha"] == "deadbeef"
+
+
+def test_slice_trace_zero_counts_recorded_and_invalid_dropped(capture):
+    class Cfg:
+        name = "t"
+    class Eng:
+        cfg = Cfg()
+        @telemetry.ticket_run
+        def run(self, issue):
+            telemetry.trace_metadata(slice_status="unavailable", slice_seeds=0, slice_nodes=0)
+            telemetry.trace_metadata(slice_status="nope", slice_seeds=-1, slice_nodes=True)
+            telemetry.trace_metadata(slice_nodes="4", slice_seeds=1.5, base_sha="deadbeef")
+            from types import SimpleNamespace
+            return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    Eng().run(1)
+    attrs = root_of(capture)
+    assert attrs["devflow.slice_status"] == "unavailable"
+    assert attrs["devflow.slice_seeds"] == 0 and attrs["devflow.slice_nodes"] == 0
+    assert attrs["devflow.base_sha"] == "deadbeef"
+
+
+def _request_with_slice(env, engine, role, text):
+    @telemetry.ticket_run
+    def run(self, issue):
+        engine._request(None, role, "p", schema=None, read_only=True, cwd=env.repo,
+                        slice_text=text)
+        from types import SimpleNamespace
+        return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+    run(engine, 1)
+
+
+def _graph_builder(root):
+    from devflow.graphify import GraphResult
+    from tests.test_graphctx import node, write_graph
+    write_graph(root, [node("calc", "calc.py", "src/calc.py"), node("add", "add()", "src/calc.py"),
+                       node("run", "run()", "src/app.py")],
+                [{"source": "calc", "target": "add", "relation": "contains"},
+                 {"source": "run", "target": "add", "relation": "calls"}])
+    return GraphResult(True, True, nodes=3, edges=2)
+
+
+def test_planner_request_records_slice_status(capture, tmp_path):
+    env, engine = _planner_env(tmp_path, _graph_builder)
+    try:
+        _request_with_slice(env, engine, "planner", "fix `add`")
+        attrs = root_of(capture)
+        assert attrs["devflow.slice_status"] == "injected"
+        assert attrs["devflow.slice_seeds"] >= 1 and attrs["devflow.slice_nodes"] >= 1
+    finally:
+        env.store.close()
+
+
+def test_planner_request_without_graph_records_unavailable(capture, tmp_path):
+    env, engine = _planner_env(tmp_path, None)
+    try:
+        _request_with_slice(env, engine, "planner", "fix `add`")
+        attrs = root_of(capture)
+        assert attrs["devflow.slice_status"] == "unavailable"
+        assert attrs["devflow.slice_seeds"] == 0 and attrs["devflow.slice_nodes"] == 0
+    finally:
+        env.store.close()
+
+
+def test_slice_only_for_planner_role(capture, tmp_path):
+    from devflow import prompts
+    env, engine = _planner_env(tmp_path, _graph_builder)
+    try:
+        for role in ("coder", "reviewer", "test_planner"):
+            (env.repo / ".devflow" / "prompts" / f"{role}.md").touch()
+            _request_with_slice(env, engine, role, "fix `add`")
+        assert not [k for k in root_of(capture) if "slice_" in k]
+
+        @telemetry.ticket_run
+        def run(self, issue):
+            for role, text in (("planner", "fix `add`"), ("planner", None), ("coder", "fix `add`")):
+                req = engine._request(None, role, "p", schema=None, read_only=True, cwd=env.repo,
+                                      slice_text=text)
+                has = prompts.SLICE_HEADER in req.system
+                assert has == (role == "planner" and text is not None)
+                if has:
+                    assert prompts.SLICE_GUIDANCE in req.system
+                    assert "## Repository brief" in req.system
+            from types import SimpleNamespace
+            return SimpleNamespace(ticket=SimpleNamespace(state=State.MERGED), status="done")
+        run(engine, 1)
+    finally:
+        env.store.close()

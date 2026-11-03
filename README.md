@@ -256,6 +256,10 @@ Agent lessons begin as candidates. They become active after independent evidence
 
 Context PRs distribute a reviewable snapshot; local lesson approval affects local runs immediately. Graphify MCP tools are injected for Claude and Codex. Cursor receives the context digest, and OpenClaw receives the checkout path and graph-query instructions.
 
+### Planner ego-network slice
+
+At plan time devflow matches file paths and symbol names in the ticket title and body against the code graph and gives the planner a 1-2 hop slice around them: callers, dependencies and the tests that exercise them. The planner is told to name affected callers and integration contracts in `risks` and list caller/test files in step `files`. Only graph-derived labels and paths are rendered (never the ticket text), and the slice is capped at about 3000 characters. If the graph is missing, unreadable or nothing matches, nothing is added and planning proceeds as before. The trace root records `slice_status` (`injected` or `unavailable`), `slice_seeds` and `slice_nodes`.
+
 ## Execution controls
 
 ```bash

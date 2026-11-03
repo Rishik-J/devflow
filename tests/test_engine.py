@@ -1050,3 +1050,84 @@ def test_unreadable_or_failing_stall_check_does_not_change_flow(tmp_path, stall_
     telemetry.configure(settings={"log_file": str(stall_log)})
     outcome = env.engine().run(1)
     assert (outcome.status, outcome.ticket.state) == (expected.status, expected.ticket.state)
+
+
+# ---------------------------------------------------------------- planner ego-network slice
+
+SLICE_HEADER = "## Ticket ego-network"
+
+
+def _seeded_builder(seed=True):
+    from tests.test_graphctx import node, write_graph
+
+    def builder(root):
+        nodes = [node("calc", "calc.py", "src/calc.py"), node("add", "add()", "src/calc.py"),
+                 node("run", "run_report()", "src/app.py"),
+                 node("t", "test_add()", "tests/test_calc.py")]
+        links = [{"source": "calc", "target": "add", "relation": "contains"},
+                 {"source": "run", "target": "add", "relation": "calls"},
+                 {"source": "t", "target": "add", "relation": "calls"}]
+        write_graph(root, nodes, links)
+        return GraphResult(True, True, nodes=len(nodes), edges=len(links))
+    return builder
+
+
+def test_planner_prompt_gets_ego_network_slice(env: Env):
+    env.host.add_issue(1, "Fix add", "Change `add` in `src/calc.py` to handle floats.")
+    engine = env.engine()
+    engine.graph_builder = _seeded_builder()
+    out = engine.run(1)
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
+    system = env.planner.calls[0].system
+    assert SLICE_HEADER in system and "run_report()" in system
+    assert "src/app.py" in system and "tests/test_calc.py" in system
+    assert "`risks`" in system and "## Repository brief" in system
+    from devflow import prompts
+    assert env.planner.calls[0].prompt == prompts.planner_task(
+        env.host.get_issue(1), [], "", None, {".": env.cfg.projects[0].gates})
+    env.say("alice", "/approve")
+    env.engine(planner=env.planner).run(1)
+    assert env.coder_agent.calls
+    assert all(SLICE_HEADER not in c.system for c in env.coder_agent.calls + env.review_agent.calls)
+
+
+def test_replan_after_feedback_keeps_the_slice(env: Env):
+    env.host.add_issue(1, "Fix add", "Change `add` in `src/calc.py`.")
+    planner = FakeAgent({"planner": [PLAN, PLAN]})
+    engine = env.engine(planner=planner)
+    engine.graph_builder = _seeded_builder()
+    engine.run(1)
+    env.say("alice", "/reject cover negatives")
+    engine = env.engine(planner=planner)
+    engine.graph_builder = _seeded_builder()
+    engine.run(1)
+    assert len(planner.calls) == 2
+    assert SLICE_HEADER in planner.calls[-1].system and "run_report()" in planner.calls[-1].system
+
+
+def test_no_graph_falls_back_to_brief_without_slice(env: Env):
+    env.host.add_issue(1, "Fix add", "Change `add` in `src/calc.py`.")
+    out = env.engine().run(1)
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
+    system = env.planner.calls[0].system
+    assert SLICE_HEADER not in system and "## Repository brief" in system
+
+
+@pytest.mark.parametrize("mode", ["raises", "no_seeds", "slice_raises"])
+def test_slice_failures_never_stop_the_ticket(env: Env, monkeypatch, mode):
+    from devflow import graphctx
+    body = "Change something unrelated." if mode == "no_seeds" else "Change `add`."
+    env.host.add_issue(1, "Fix", body)
+    engine = env.engine()
+    if mode == "raises":
+        def boom(root):
+            raise RuntimeError("builder died")
+        engine.graph_builder = boom
+    else:
+        engine.graph_builder = _seeded_builder()
+    if mode == "slice_raises":
+        monkeypatch.setattr(graphctx, "ticket_slice",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    out = engine.run(1)
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
+    assert SLICE_HEADER not in env.planner.calls[0].system
