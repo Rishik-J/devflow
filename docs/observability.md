@@ -98,6 +98,7 @@ disable tracing for that repository.
 | `tool.git`, `tool.github`, `tool.github_project` | Git and host operation latency and exception type |
 | `worktree.*` | Checkout preparation overhead |
 | `graph.refresh` | Graph freshness check: `devflow.graph.refreshed` (true only when a rebuild succeeded), `.status`, `.nodes`, `.edges`, `.fingerprint` |
+| `stall.detected` | Event emitted when a finished stage ran longer than the p99 of its own history: `devflow.stage`, `devflow.duration_seconds`, `devflow.threshold_p99_seconds`, `devflow.baseline_samples` |
 | `stage.result` | Artifact success and review/blocking finding counts |
 | `workflow.summary` | Overall recorded duration, human waiting time and review rounds when a retro runs |
 | `learning.retro` | Retrospective execution time and failure status |
@@ -157,7 +158,7 @@ devflow telemetry metrics --issue 12
 devflow stats
 ```
 
-`telemetry metrics` summarizes the local span log: stage mean/max latency, CLI call counts,
+`telemetry metrics` summarizes the local span log: per-stage latency (`count`, `mean`, `max`, `p50`, `p90`, `p99`, linear interpolation), `stage_stalls` (count of `stall.detected` events per stage), CLI call counts,
 recorded coding cost and ticket-turn outcomes. It excludes synthetic demo spans. Malformed, non-object or incomplete trace lines are ignored
 for the aggregates and are not counted in `spans`. `stats` reads
 the durable workflow database and summarizes tickets, reviews and lessons. Neither command
@@ -169,10 +170,20 @@ summary combining all resumed invocations: `runs` and `outcomes` from `ticket.ru
 `active_run_seconds` (observed span time, overlapping runs merged), `elapsed_wall_seconds`
 (observed, first run start to last run end) and `inferred_gap_seconds` (inferred: elapsed minus
 active, never negative; human wait time outside the recorded runs is not observable). It also
-reports stage and agent duration count/mean/max and agent call counts. Output contains only
+reports stage duration count/mean/max/p50/p90/p99, agent duration count/mean/max, `stage_stalls` and agent call counts. Output contains only
 counts, durations, outcome names and span names, never prompts, outputs, hashes or agent session
 ids. Synthetic spans are excluded and counted. With no spans for the issue, zeroed output is
 printed.
+
+**Stall detection.** After each stage finishes, the engine compares its wall time with the p99 of
+that stage's earlier `stage.*` spans in the local log. It reports a stall only when at least 5
+earlier samples exist and the duration is strictly greater than their p99. Only non-synthetic
+spans with status `ok` form the baseline, so `waiting` (human pause) and `error` spans are
+ignored. A stall emits a `stall.detected` event (never named `stage.*`, so it is not counted as
+a latency) and prints one `devflow: stall warning: ...` line to stderr. The check runs after the
+stage completes, not while it runs, and never affects ticket state, stage timeouts or model
+calls. It is skipped when telemetry is disabled or no log file is configured. With few samples
+p99 is close to the maximum, so early detection is intentionally rare.
 
 ## Logs and export failures
 

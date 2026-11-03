@@ -298,6 +298,8 @@ devflow telemetry metrics
 devflow telemetry metrics --issue 12   # per-ticket latency summary
 ```
 
+`telemetry metrics` reports per-stage latency as `count`, `mean`, `max`, `p50`, `p90` and `p99`, plus `stage_stalls`: how often a finished stage exceeded the p99 of its own history (see [docs/observability.md](docs/observability.md)).
+
 The setup image, Compose stack and tracing integration are included in this repository.
 Anyone cloning devflow gets the same setup; only Docker with Compose v2 is needed to start
 observability. Run `./scripts/observability up` to connect the devflow checkout itself, or
