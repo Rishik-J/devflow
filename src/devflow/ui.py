@@ -10,6 +10,7 @@ import secrets
 import socketserver
 import sys
 import threading
+import time
 import webbrowser
 from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
@@ -312,6 +313,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div id="board-view">
+  <div id="board-banner" class="a-card" style="display:none; margin-bottom:16px; border-left:3px solid var(--yellow)"></div>
   <div class="stats-bar">
     <div class="stat-card">
       <div class="stat-label">Working Now</div>
@@ -527,6 +529,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       lastData = data;
       document.getElementById('repo-badge').innerText = data.repo || 'devflow';
       
+      const banner = document.getElementById('board-banner');
+      if (data.board_error) {
+        banner.style.display = '';
+        banner.innerText = (data.board_stale ? 'GitHub is unavailable; showing the last board it returned. ' :
+          'GitHub is unavailable; showing local ticket state instead of the Project board. ') + data.board_error;
+      } else { banner.style.display = 'none'; }
+
       const counts = {
         working: (data.columns['In progress'] || []).length,
         ready: (data.columns['Ready'] || []).length,
@@ -607,6 +616,40 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+BOARD_TTL_SECONDS = 60.0
+_BOARD_CACHE: dict[tuple[str, int], dict[str, Any]] = {}
+_BOARD_LOCK = threading.Lock()
+
+# Where a ticket belongs on the board when GitHub cannot be asked.
+_STATE_COLUMN = {
+    "new": "Ready",
+    "merged": "Done", "cancelled": "Done",
+    "in_review": "In review", "awaiting_merge_approval": "In review", "changes_requested": "In review",
+}
+
+
+def _board_items(slug: str, owner: str, project: int, now: float | None = None) -> tuple[list[Any], str | None]:
+    """Project items, cached so a polling page does not spend GitHub's rate limit.
+
+    Failures are cached too, so a rate-limited GitHub is retried once per TTL rather than every poll.
+    Returns (items, error); on error the last good items are returned when there are any.
+    """
+    from .board import GhBoard
+    now = time.monotonic() if now is None else now
+    key = (slug, project)
+    with _BOARD_LOCK:
+        entry = _BOARD_CACHE.get(key)
+        if entry and now - entry["at"] < BOARD_TTL_SECONDS:
+            return entry["items"], entry["error"]
+        try:
+            items = list(GhBoard(slug, owner, project).items())
+            entry = {"at": now, "items": items, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            entry = {"at": now, "items": entry["items"] if entry else [], "error": str(exc)[:300] or type(exc).__name__}
+        _BOARD_CACHE[key] = entry
+        return entry["items"], entry["error"]
+
+
 def collect_state(root: Path) -> dict[str, Any]:
     try:
         cfg = load_config(root)
@@ -631,6 +674,7 @@ def collect_state(root: Path) -> dict[str, Any]:
                     "implement_attempts": t.implement_attempts,
                     "branch": t.branch,
                     "worktree": t.worktree,
+                    "local_title": t.title,
                 }
 
     columns: dict[str, list[dict[str, Any]]] = {
@@ -640,12 +684,23 @@ def collect_state(root: Path) -> dict[str, Any]:
         "In review": [],
         "Done": [],
     }
+    source, board_error, stale = "local", None, False
+
+    def local_fallback() -> None:
+        for issue, details in local_tickets.items():
+            column = _STATE_COLUMN.get(details["stage"], "In progress")
+            columns[column].append({
+                "issue": issue,
+                "title": details.get("local_title") or f"Ticket #{issue}",
+                "status": column,
+                **{k: v for k, v in details.items() if k != "local_title"},
+            })
 
     if cfg and cfg.board.project:
-        from .board import GhBoard
-        try:
-            board = GhBoard(slug, cfg.board.owner, cfg.board.project)
-            for item in board.items():
+        items, board_error = _board_items(slug, cfg.board.owner, cfg.board.project)
+        if items:
+            source, stale = "github", board_error is not None
+            for item in items:
                 status = item.status or "Backlog"
                 if status not in columns:
                     columns[status] = []
@@ -657,31 +712,21 @@ def collect_state(root: Path) -> dict[str, Any]:
                     "status": status,
                 }
                 if item.issue in local_tickets:
-                    info.update(local_tickets[item.issue])
+                    info.update({k: v for k, v in local_tickets[item.issue].items() if k != "local_title"})
                 columns[status].append(info)
-        except Exception:  # noqa: BLE001
-            # Fall back to local tickets
-            for issue, details in local_tickets.items():
-                columns["In progress"].append({
-                    "issue": issue,
-                    "title": f"Ticket #{issue}",
-                    "status": "In progress",
-                    **details,
-                })
+        else:
+            local_fallback()
     else:
-        for issue, details in local_tickets.items():
-            columns["In progress"].append({
-                "issue": issue,
-                "title": f"Ticket #{issue}",
-                "status": "In progress",
-                **details,
-            })
+        local_fallback()
 
     return {
         "repo": name,
         "repo_slug": slug,
         "project": project,
         "columns": columns,
+        "source": source,
+        "board_error": board_error,
+        "board_stale": stale,
     }
 
 
