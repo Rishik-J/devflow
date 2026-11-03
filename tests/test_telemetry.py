@@ -680,3 +680,226 @@ def test_full_lifecycle_traces_span_three_invocations_with_consistent_parentage(
         assert {n: r["status"] for n, r in stages.items()} == expected
     assert not any(r["status"] == "waiting" for r in slices[2])
     assert not any(r["status"] == "error" for r in allrows)
+
+
+# ---- trace-completeness gate --------------------------------------------------------------
+
+import copy
+import random
+from pathlib import Path
+
+from devflow.tracecheck import REQUIRED_STAGES, check_trace_completeness
+
+REPO = Path(__file__).resolve().parent.parent
+SESSION = "langfuse.session.id"
+
+
+def _lifecycle_rows(tmp_path):
+    """Run the real three-invocation lifecycle with the file exporter; return the exported rows."""
+    log = tmp_path / "traces.jsonl"
+    telemetry.configure(settings={"enabled": True, "log_file": str(log)})
+    env = Env(tmp_path / "ticket")
+    try:
+        assert env.engine().run(1).ticket.state is State.AWAITING_PLAN_APPROVAL
+        env.say("alice", "/approve")
+        assert env.engine().run(1).ticket.state is State.AWAITING_MERGE_APPROVAL
+        env.say("alice", "/approve", number=env.pr())
+        assert env.engine().run(1).ticket.state is State.MERGED
+    finally:
+        env.store.close()
+        telemetry.configure(settings={})
+    return rows(log)
+
+
+@pytest.fixture(scope="module")
+def lifecycle(tmp_path_factory):
+    return _lifecycle_rows(tmp_path_factory.mktemp("lifecycle"))
+
+
+@pytest.fixture
+def trace(lifecycle):
+    return copy.deepcopy(lifecycle)
+
+
+def kinds(violations):
+    return sorted(v.kind for v in violations)
+
+
+def span_of(trace, name, nth=0):
+    return [r for r in trace if r["name"] == name][nth]
+
+
+def test_trace_completeness_full_lifecycle_has_no_violations(lifecycle, tmp_path):
+    violations = check_trace_completeness(lifecycle)
+    assert not violations, "\n".join(violations)
+    again = _lifecycle_rows(tmp_path)
+    assert check_trace_completeness(again) == violations == []
+    assert [r["name"] for r in again] == [r["name"] for r in lifecycle]
+
+
+@pytest.mark.parametrize("logical", list(REQUIRED_STAGES))
+def test_trace_completeness_flags_each_dropped_required_stage(trace, logical):
+    name = REQUIRED_STAGES[logical][0]
+    trace = [r for r in trace if r["name"] != name]
+    missing = [v for v in check_trace_completeness(trace) if v.kind == "missing_stage"]
+    assert len(missing) == 1 and f"'{name}' ({logical}) missing" in missing[0]
+
+
+def test_trace_completeness_flags_stage_reparented_to_nonexistent_id(trace):
+    stage = span_of(trace, "stage.implementing")
+    stage["parent_id"] = "zz99"
+    violations = check_trace_completeness(trace)
+    dangling = [v for v in violations if v.kind == "dangling_parent"]
+    assert dangling and any(f"id={stage['span_id']}" in v and "parent 'zz99' not found" in v for v in dangling)
+    assert not any(v.kind == "missing_stage" for v in violations)
+
+
+def test_trace_completeness_flags_stage_reparented_to_non_root_span(trace):
+    stage = span_of(trace, "stage.gates")
+    stage["parent_id"] = span_of(trace, "agent.claude.coder")["span_id"]
+    found = [v for v in check_trace_completeness(trace) if v.kind == "stage_not_under_root"]
+    assert len(found) == 1 and "'stage.gates'" in found[0] and "direct child of 'ticket.run'" in found[0]
+
+
+def test_trace_completeness_flags_wrong_state_attribute(trace):
+    span_of(trace, "stage.gates")["attributes"]["devflow.state"] = "in_review"
+    assert kinds(check_trace_completeness(trace)) == ["state_mismatch"]
+
+
+def test_trace_completeness_flags_session_mismatch(trace):
+    victim = span_of(trace, "stage.gates")
+    victim["attributes"][SESSION] = "other:issue-9"
+    violations = check_trace_completeness(trace)
+    assert kinds(violations) == ["session_mismatch"]
+    assert f"id={victim['span_id']}" in violations[0] and "'other:issue-9'" in violations[0]
+
+
+def test_trace_completeness_flags_missing_root(trace):
+    root = [r for r in trace if r["name"] == "ticket.run"][1]
+    trace = [r for r in trace if r is not root]
+    violations = check_trace_completeness(trace)
+    got = set(kinds(violations))
+    assert {"missing_root", "dangling_parent"} <= got
+    assert any(v.kind == "missing_root" and v.startswith("slice 2:") for v in violations)
+
+
+def test_trace_completeness_flags_reparented_children_in_real_trace(trace):
+    roots = {r["trace_id"]: r["span_id"] for r in trace if r["name"] == "ticket.run"}
+    agent = span_of(trace, "agent.fake.planner")
+    gate = span_of(trace, "gate.result")
+    transition = span_of(trace, "state.transition")
+    for r in (agent, gate, transition):
+        r["parent_id"] = roots[r["trace_id"]]
+    got = kinds(check_trace_completeness(trace))
+    assert "agent_not_under_stage" in got and "child_not_under_stage" in got
+    assert got.count("child_not_under_stage") == 2
+
+
+def test_trace_completeness_flags_agent_under_wrong_stage(trace):
+    coder = span_of(trace, "agent.claude.coder")
+    coder["parent_id"] = span_of(trace, "stage.in_review")["span_id"]
+    assert "agent_wrong_stage" in kinds(check_trace_completeness(trace))
+
+
+def test_trace_completeness_flags_dropped_gate_results(trace):
+    trace = [r for r in trace if r["name"] != "gate.result"]
+    violations = check_trace_completeness(trace)
+    assert kinds(violations) == ["missing_child"] and "'gate.result'" in violations[0]
+
+
+def _min(**over):
+    base = [_row("ticket.run", "r", 0, "", **{SESSION: "s"})]
+    for name, sid in (("stage.refining", "a"), ("stage.test_design", "b"), ("stage.implementing", "c"),
+                      ("stage.gates", "d"), ("stage.in_review", "e")):
+        base.append(_row(name, sid, 1, "r", **{SESSION: "s", "devflow.state": name.removeprefix("stage.")}))
+    for name, sid, parent in (("agent.x.planner", "f", "a"), ("agent.x.test_planner", "g", "b"),
+                              ("agent.x.coder", "h", "c"), ("agent.x.reviewer", "i", "e"),
+                              ("gate.result", "j", "d"), ("state.transition", "k", "a")):
+        base.append(_row(name, sid, 2, parent, **{SESSION: "s"}))
+    return base
+
+
+def test_trace_completeness_minimal_valid_trace_and_empty_input():
+    assert check_trace_completeness(_min()) == []
+    assert kinds(check_trace_completeness([])) == ["missing_child", "missing_child"] + ["missing_stage"] * 5
+
+
+def test_trace_completeness_structural_violations_in_hand_built_rows():
+    extra = _row("ticket.run", "r2", 3, "", **{SESSION: "s"})
+    assert "multiple_roots" in kinds(check_trace_completeness(_min() + [extra]))
+    rows_ = _min()
+    rows_[0]["parent_id"] = "a"
+    assert "root_has_parent" in kinds(check_trace_completeness(rows_))
+    rows_ = _min()
+    rows_[-1]["trace_id"] = "other"  # splits into a rootless slice
+    assert {"missing_root", "dangling_parent"} <= set(kinds(check_trace_completeness(rows_)))
+    rows_ = _min() + [_row("x.a", "x", 5, "y", **{SESSION: "s"}), _row("x.b", "y", 5, "x", **{SESSION: "s"})]
+    cyc = [v for v in check_trace_completeness(rows_) if v.kind == "cycle"]
+    assert len(cyc) == 2
+    rows_ = _min() + [_row("lonely", "z", 5, "", **{SESSION: "s"})]
+    assert kinds(check_trace_completeness(rows_)) == ["orphan"]
+
+
+def test_trace_completeness_is_order_independent():
+    rows_ = _min()
+    rows_[3]["parent_id"] = "nope"
+    rows_[4]["attributes"][SESSION] = "z"
+    expected = list(check_trace_completeness(rows_))
+    assert expected
+    for seed in range(5):
+        shuffled = rows_[:]
+        random.Random(seed).shuffle(shuffled)
+        assert list(check_trace_completeness(shuffled)) == expected
+
+
+def test_trace_completeness_attachment_rules_in_hand_built_rows():
+    rows_ = _min()
+    next(r for r in rows_ if r["span_id"] == "f")["parent_id"] = "r"       # agent under root
+    next(r for r in rows_ if r["span_id"] == "h")["parent_id"] = "f"       # agent under agent
+    next(r for r in rows_ if r["span_id"] == "j")["parent_id"] = "r"       # gate under root
+    next(r for r in rows_ if r["span_id"] == "k")["parent_id"] = "h"       # transition under agent
+    got = kinds(check_trace_completeness(rows_))
+    assert got.count("agent_not_under_stage") == 2 and got.count("child_not_under_stage") == 2
+    wrong = _min()
+    next(r for r in wrong if r["span_id"] == "g")["parent_id"] = "a"
+    assert "agent_wrong_stage" in kinds(check_trace_completeness(wrong))
+    bare = [r for r in _min() if not r["name"].startswith(("agent.", "gate.", "state."))]
+    assert kinds(check_trace_completeness(bare)) == ["missing_child"] * 6
+
+
+def test_trace_completeness_message_formats():
+    rows_ = [r for r in _min() if r["name"] != "stage.gates"]
+    assert "slice 1: required stage span 'stage.gates' (gates) missing" in check_trace_completeness(rows_)
+    rows_ = _min()
+    next(r for r in rows_ if r["span_id"] == "c")["parent_id"] = "zz99"
+    assert "slice 1: span 'stage.implementing' (id=c) parent 'zz99' not found" in check_trace_completeness(rows_)
+    rows_ = _min()
+    rows_[2]["attributes"][SESSION] = "q"
+    msg = check_trace_completeness(rows_)[0]
+    assert msg.kind == "session_mismatch" and "slice 1" in msg and "'stage.test_design' (id=b)" in msg
+    msg = check_trace_completeness(rows_[1:])
+    assert any(v == "slice 1: no 'ticket.run' root span (trace_id=t)" for v in msg)
+
+
+def test_trace_completeness_assertion_message_lists_every_violation():
+    rows_ = [r for r in _min() if r["name"] not in ("stage.gates", "stage.in_review")]
+    violations = check_trace_completeness(rows_)
+    with pytest.raises(AssertionError) as err:
+        assert not violations, "\n".join(violations)
+    assert all(v in str(err.value) for v in violations) and len(violations) >= 2
+
+
+def test_ci_workflow_and_docs_reflect_trace_gate():
+    ci = (REPO / ".github/workflows/ci.yml").read_text()
+    assert "python -m pytest -q" in ci
+    for line in ci.splitlines():
+        if "trace_completeness" in line:
+            assert line.strip().endswith("python -m pytest tests/test_telemetry.py -k trace_completeness -q")
+    docs = (REPO / "docs/observability.md").read_text()
+    assert "trace-completeness" in docs
+    assert "python -m pytest tests/test_telemetry.py -k trace_completeness" in docs
+    import subprocess
+    import sys
+    out = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-k", "trace_completeness",
+                          str(REPO / "tests/test_telemetry.py")], capture_output=True, text=True, check=False).stdout
+    assert "test_trace_completeness_full_lifecycle_has_no_violations" in out
