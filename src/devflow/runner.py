@@ -19,6 +19,33 @@ class RunnerBusy(ValueError):
     pass
 
 
+def runner_status(root: Path) -> dict:
+    """Advisory, read-only probe: is the pid in the runner lock file alive? Never takes the flock."""
+    off = {"running": False, "pid": None}
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=5, check=False)
+        if out.returncode != 0 or not out.stdout.strip():
+            return off
+        common = Path(out.stdout.strip())
+        if not common.is_absolute():
+            common = root / common
+        text = (common / "devflow-runner.lock").read_text().strip()
+        pid = int(text)
+        if pid <= 0:
+            return off
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return off
+        except PermissionError:
+            pass
+        return {"running": True, "pid": pid}
+    except Exception:  # noqa: BLE001 - advisory only
+        return off
+
+
 @contextmanager
 def ownership(root: Path):
     # Every git worktree of the same repo shares this lock in the common git directory.

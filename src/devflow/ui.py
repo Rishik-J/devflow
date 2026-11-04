@@ -234,6 +234,59 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       100% { opacity: 1; transform: scale(1); }
     }
 
+
+    /* ---- live flight deck ---- */
+    #flight-deck { position: sticky; top: 0; z-index: 20; margin-bottom: 20px; background: #101512;
+      border: 1px solid #222a24; border-radius: 10px; padding: 14px 16px; color: #cfd8d2; }
+    #flight-deck[hidden] { display: none; }
+    #flight-deck.active { min-height: 200px; }
+    .fd-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .fd-issue { background: #222a24; color: #34d399; border: 1px solid #2b352e; border-radius: 12px; padding: 2px 10px; font-weight: 600; font-size: 12px; cursor: pointer; }
+    .fd-title { font-weight: 600; color: #f0f6fc; overflow-wrap: anywhere; flex: 1; min-width: 0; }
+    .fd-stage { color: #34d399; font-size: 12px; font-weight: 600; }
+    .fd-more { background: #222a24; border: 1px solid #2b352e; border-radius: 12px; padding: 2px 10px; font-size: 12px; }
+    .fd-more[hidden] { display: none; }
+    .fd-stepper { display: flex; align-items: center; margin-bottom: 14px; }
+    .fd-node { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b9a90; white-space: nowrap; }
+    .fd-badge { width: 24px; height: 24px; border-radius: 50%; border: 1px solid #2b352e; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: #161c18; }
+    .fd-node.done .fd-badge { background: #238636; border-color: #238636; color: #fff; }
+    .fd-node.done .fd-badge::before { content: "\2713"; }
+    .fd-node.done .fd-badge span { display: none; }
+    .fd-node.active { color: #34d399; font-weight: 600; }
+    .fd-node.active .fd-badge { border-color: #34d399; color: #34d399; animation: fd-glow 1.8s ease-in-out infinite; }
+    .fd-conn { flex: 1; min-width: 12px; height: 2px; margin: 0 8px; background: #2b352e; position: relative; overflow: hidden; }
+    .fd-conn.done { background: #238636; }
+    .fd-conn.active::after { content: ""; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, #34d399, transparent); animation: fd-flow 1.4s linear infinite; }
+    @keyframes fd-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); } 50% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); } }
+    @keyframes fd-flow { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+    @keyframes fd-warn { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
+    .fd-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .fd-pill, .fd-copy { background: #161c18; border: 1px solid #2b352e; color: #cfd8d2; border-radius: 12px; padding: 2px 10px; font-size: 12px; font-family: inherit; }
+    .fd-copy { cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fd-copy:hover { border-color: #34d399; }
+    .fd-timer { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid #34d399; color: #34d399; border-radius: 8px; padding: 4px 10px; font-size: 13px; }
+    .fd-time { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .fd-bench { color: #8b9a90; font-size: 12px; }
+    .fd-stall { display: none; font-weight: 600; }
+    .fd-timer.amber { border-color: #d29922; color: #d29922; }
+    .fd-timer.amber .fd-stall { display: inline; }
+    .fd-timer.amber.stalled { animation: fd-warn 2s ease-in-out infinite; }
+    .fd-toggle { background: none; border: none; color: #8b9a90; cursor: pointer; font-size: 12px; margin-top: 10px; padding: 0; }
+    .fd-feed { background: #0a0e0b; border: 1px solid #222a24; border-radius: 6px; padding: 8px 10px; margin-top: 6px; max-height: 160px; overflow-y: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    .fd-feed[hidden] { display: none; }
+    .fd-line.ok { color: #3fb950; } .fd-line.fail { color: #f85149; } .fd-line.info { color: #9aa7a0; }
+    .fd-compact { display: none; }
+    @media (max-width: 640px) {
+      #flight-deck.active { min-height: 0; }
+      .fd-stepper .fd-node .fd-label, .fd-meta, .fd-bench, .fd-title { display: none; }
+      .fd-stepper { gap: 2px; }
+      .fd-conn { margin: 0 2px; }
+      .fd-compact { display: inline; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fd-node.active .fd-badge, .fd-conn.active::after, .fd-timer.amber.stalled, .live-dot { animation: none; }
+    }
+
     .item-card { cursor: pointer; }
     .item-card:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
     #drawer-overlay {
@@ -284,13 +337,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <h1>Devflow</h1>
       <span class="badge" id="repo-badge">devflow</span>
       <span style="font-size: 13px; color: #8b949e; margin-left: 8px;">
-        <span class="live-dot"></span>Live tracking (polls every 3s)
+        <span class="live-dot"></span>Live tracking (board every 3s, flight deck every 2.5s)
       </span>
     </div>
     <div>
       <button class="refresh-btn" onclick="fetchState()">Refresh</button>
     </div>
   </header>
+
+  <section id="flight-deck" class="fd" aria-label="Live Flight Deck" hidden>
+    <div class="fd-top">
+      <button type="button" class="fd-issue" id="fd-issue"></button>
+      <span class="fd-title" id="fd-title"></span>
+      <span class="fd-stage" id="fd-stage" aria-live="polite"></span>
+      <span class="fd-more" id="fd-more" hidden></span>
+    </div>
+    <div class="fd-stepper" id="fd-stepper"></div>
+    <div class="fd-meta">
+      <span class="fd-pill" id="fd-agent"></span>
+      <button type="button" class="fd-copy" id="fd-worktree" title="Copy worktree path"></button>
+      <button type="button" class="fd-copy" id="fd-branch" title="Copy branch"></button>
+    </div>
+    <div class="fd-timer" id="fd-timer">
+      <span class="fd-compact" id="fd-compact"></span>
+      <span class="fd-time" id="fd-time">00:00</span>
+      <span class="fd-bench" id="fd-bench"></span>
+      <span class="fd-stall">Stall Warning: Stage exceeding 99th percentile</span>
+    </div>
+    <div><button type="button" class="fd-toggle" id="fd-toggle" aria-expanded="false">&#9656; Activity</button></div>
+    <div class="fd-feed" id="fd-feed" hidden></div>
+  </section>
 
   <div class="stats-bar">
     <div class="stat-card">
@@ -667,6 +743,148 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     fetchState();
     setInterval(fetchState, 3000);
+
+    // ---------------------------------------------------------------- live flight deck
+    const FD_NODES = [['refine', '01', 'Refine'], ['plan', '02', 'Plan'], ['implement', '03', 'Implement'],
+                      ['gates', '04', 'Verify Gates'], ['review', '05', 'Independent Review']];
+    const FD_ACTIVE_MS = 2500, FD_IDLE_MS = 10000;
+    const fd = {
+      el: document.getElementById('flight-deck'), run: null, anchorElapsed: 0, anchorAt: 0,
+      busy: false, feedSig: '', stepSig: '', open: false,
+    };
+    const fdEl = id => document.getElementById(id);
+    function fdMmss(s) {
+      s = Math.max(0, Math.floor(s));
+      return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    }
+    function fdCopy(text, btn) {
+      const done = () => {
+        const prev = btn.dataset.label || btn.textContent;
+        btn.dataset.label = prev; btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = btn.dataset.label; }, 1200);
+      };
+      const fallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        document.body.removeChild(ta); done();
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+      else fallback();
+    }
+    function fdBuildStepper() {
+      const box = fdEl('fd-stepper');
+      box.textContent = '';
+      FD_NODES.forEach((n, i) => {
+        if (i) { const c = document.createElement('span'); c.className = 'fd-conn'; box.appendChild(c); }
+        const node = document.createElement('span'); node.className = 'fd-node'; node.dataset.node = n[0];
+        const badge = document.createElement('span'); badge.className = 'fd-badge';
+        const num = document.createElement('span'); num.textContent = n[1]; badge.appendChild(num);
+        const label = document.createElement('span'); label.className = 'fd-label'; label.textContent = n[1] + ' ' + n[2];
+        node.appendChild(badge); node.appendChild(label); box.appendChild(node);
+      });
+    }
+    function fdPatchStepper(run) {
+      const done = new Set(run.completed_nodes || []);
+      const nodes = fdEl('fd-stepper').querySelectorAll('.fd-node');
+      const conns = fdEl('fd-stepper').querySelectorAll('.fd-conn');
+      nodes.forEach((n, i) => {
+        n.classList.toggle('done', done.has(n.dataset.node));
+        n.classList.toggle('active', n.dataset.node === run.node);
+        if (i) {
+          conns[i - 1].classList.toggle('done', done.has(n.dataset.node) || n.dataset.node === run.node);
+          conns[i - 1].classList.toggle('active', n.dataset.node === run.node);
+        }
+      });
+    }
+    function fdRenderFeed(run) {
+      const feed = fdEl('fd-feed');
+      const sig = JSON.stringify(run.feed || []);
+      if (sig === fd.feedSig) return;
+      const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 8 || !fd.feedSig;
+      fd.feedSig = sig;
+      feed.textContent = '';
+      (run.feed || []).forEach(e => {
+        const line = document.createElement('div');
+        line.className = 'fd-line ' + (['ok', 'fail', 'info'].includes(e.level) ? e.level : 'info');
+        const t = typeof e.ts === 'number' ? new Date(e.ts * 1000).toLocaleTimeString() : '';
+        line.textContent = t + '  ' + (e.text || '');
+        feed.appendChild(line);
+      });
+      if (atBottom) feed.scrollTop = feed.scrollHeight;
+    }
+    function fdTick() {
+      const run = fd.run;
+      if (!run) return;
+      const elapsed = fd.anchorElapsed + (performance.now() - fd.anchorAt) / 1000;
+      const b = run.benchmark || {};
+      const stalled = !!b.stalled || (b.p99 !== null && b.p99 !== undefined && (b.samples || 0) >= 5 && elapsed > b.p99);
+      const t = fdMmss(elapsed);
+      if (fdEl('fd-time').textContent !== t) fdEl('fd-time').textContent = t;
+      fdEl('fd-compact').textContent = '#' + run.issue + ' ' + (FD_NODES.find(n => n[0] === run.node) || ['', '', ''])[2] + ' ';
+      const timer = fdEl('fd-timer');
+      timer.classList.toggle('amber', stalled);
+      timer.classList.toggle('stalled', !!b.stalled);
+    }
+    function renderDeck(data) {
+      const runs = (data && data.runs) || [];
+      const deck = fd.el;
+      if (!runs.length) { fd.run = null; deck.hidden = true; deck.classList.remove('active'); return; }
+      const run = runs[0];
+      const wasHidden = deck.hidden;
+      deck.hidden = false; deck.classList.add('active');
+      if (wasHidden || fd.stepSig !== 'built') { fdBuildStepper(); fd.stepSig = 'built'; }
+      if (!fd.run || fd.run.issue !== run.issue) { fd.feedSig = ''; }
+      fd.run = run; fd.anchorElapsed = run.elapsed_s || 0; fd.anchorAt = performance.now();
+      fdEl('fd-issue').textContent = '#' + run.issue;
+      fdEl('fd-title').textContent = run.title || '';
+      const label = (FD_NODES.find(n => n[0] === run.node) || ['', '', run.node || ''])[2];
+      fdEl('fd-stage').textContent = label;
+      const more = fdEl('fd-more');
+      more.hidden = runs.length < 2; more.textContent = '+' + (runs.length - 1) + ' more';
+      fdPatchStepper(run);
+      fdEl('fd-agent').textContent = run.agent || '—';
+      const wt = fdEl('fd-worktree'), br = fdEl('fd-branch');
+      wt.textContent = 'worktree: ' + (run.worktree || '—'); wt.dataset.label = wt.textContent; wt.dataset.value = run.worktree || '';
+      br.textContent = 'branch: ' + (run.branch || '—') + (run.commit ? ' @ ' + run.commit : '');
+      br.dataset.label = br.textContent; br.dataset.value = run.branch || '';
+      const b = run.benchmark || {};
+      fdEl('fd-bench').textContent = (b.p50 !== null && b.p50 !== undefined && b.p99 !== null && b.p99 !== undefined)
+        ? 'p50 ' + fdMmss(b.p50) + ' · p99 ' + fdMmss(b.p99) : '';
+      fdRenderFeed(run);
+      fdTick();
+    }
+    fdEl('fd-issue').addEventListener('click', () => { if (fd.run) openTicket(fd.run.issue, false); });
+    fdEl('fd-worktree').addEventListener('click', e => { if (e.currentTarget.dataset.value) fdCopy(e.currentTarget.dataset.value, e.currentTarget); });
+    fdEl('fd-branch').addEventListener('click', e => { if (e.currentTarget.dataset.value) fdCopy(e.currentTarget.dataset.value, e.currentTarget); });
+    fdEl('fd-toggle').addEventListener('click', () => {
+      fd.open = !fd.open;
+      fdEl('fd-feed').hidden = !fd.open;
+      fdEl('fd-toggle').setAttribute('aria-expanded', String(fd.open));
+      fdEl('fd-toggle').textContent = (fd.open ? '▾' : '▸') + ' Activity';
+      if (fd.open) fdEl('fd-feed').scrollTop = fdEl('fd-feed').scrollHeight;
+    });
+    async function pollLive() {
+      if (fd.busy) return;
+      fd.busy = true;
+      let active = !!fd.run;
+      try {
+        const res = await fetch('/api/live');
+        if (!res.ok) throw new Error('live API error: ' + res.status);
+        const data = await res.json();
+        renderDeck(data);
+        active = !!(data.runs && data.runs.length);
+      } catch (err) {
+        console.error('Failed to fetch live runs:', err); // keep the last good view
+      } finally {
+        fd.busy = false;
+        setTimeout(pollLive, active ? FD_ACTIVE_MS : FD_IDLE_MS);
+      }
+    }
+    setInterval(fdTick, 1000);
+    pollLive();
+
   </script>
 </body>
 </html>
@@ -934,6 +1152,125 @@ def collect_ticket(root: Path, issue: int, *, host_factory=None,
     }
 
 
+# ---------------------------------------------------------------- live flight deck
+NODES = ["refine", "plan", "implement", "gates", "review"]
+STATE_NODE = {State.REFINING: "refine", State.TEST_DESIGN: "plan", State.IMPLEMENTING: "implement",
+              State.GATES: "gates", State.IN_REVIEW: "review"}
+ACTIVE_STATES = frozenset(STATE_NODE)
+AGENT_LABELS = {"claude": "Claude Code", "codex": "Codex", "openclaw": "OpenClaw Planner"}
+FEED_MAX = 20
+
+
+def _stage_benchmark(root: Path, state: State, elapsed: float) -> dict[str, Any]:
+    from . import stall
+    path = root / ".devflow" / "state" / "traces.jsonl"
+    durations = stall.baseline_durations(stall.read_log_records(path), f"stage.{state.value}")
+    n = len(durations)
+    if n < stall.MIN_SAMPLES:
+        return {"p50": None, "p99": None, "samples": n, "stalled": False}
+    p50, p99 = stall.percentile(durations, 50), stall.percentile(durations, 99)
+    return {"p50": round(p50, 3), "p99": round(p99, 3), "samples": n,
+            "stalled": stall.check_stall(f"stage.{state.value}", elapsed, durations) is not None}
+
+
+def _gate_text(r: dict[str, Any]) -> tuple[str, str]:
+    cmd = str(r.get("command") or f"{r.get('project', '')}:{r.get('gate', '')}")
+    dur = r.get("duration_s")
+    took = f" in {float(dur):.1f}s" if isinstance(dur, (int, float)) else ""
+    ok = r.get("exit_code") == 0 and not r.get("timed_out")
+    return ("ok" if ok else "fail"), f"Gate: {cmd} ran{took} ({'PASS' if ok else 'FAIL'})"
+
+
+def _feed(events: list[dict[str, Any]], results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The newest FEED_MAX sanitized entries, oldest first. Only whitelisted fields are read."""
+    out: list[dict[str, Any]] = []
+
+    def put(ts: Any, level: str, text: str) -> None:
+        out.append({"ts": ts, "level": level, "text": text[:300]})
+
+    for e in _strip_reply(events):
+        kind = e.get("kind")
+        if kind == "transition":
+            reason = f" ({e['reason']})" if e.get("reason") else ""
+            put(e.get("ts"), "info", f"{e.get('actor', 'engine')}: moved to {e.get('to', '?')}{reason}")
+        elif kind == "error":
+            put(e.get("ts"), "fail", f"Error in {e.get('state', '?')}: {e.get('error', '')}")
+    for r in _strip_reply(results):
+        p, stage, ts = _dict(r.get("payload")), r.get("stage"), r.get("ts")
+        if stage == "plan":
+            put(ts, "ok" if r.get("ok") else "fail",
+                f"Plan {'ready' if r.get('ok') else 'rejected'} (attempt {r.get('attempt')})")
+        elif stage == "gates":
+            for g in _list(p.get("results")):
+                level, text = _gate_text(_dict(g))
+                put(ts, level, text)
+        elif stage == "review":
+            verdict = p.get("verdict") or ("approved" if p.get("approved") else "changes requested")
+            put(ts, "ok" if r.get("ok") else "fail", f"Review verdict: {verdict}")
+    out.sort(key=lambda x: x["ts"] if isinstance(x["ts"], (int, float)) else 0)
+    return out[-FEED_MAX:]
+
+
+def _head_sha(worktree: str) -> str | None:
+    import subprocess
+    if not worktree or not Path(worktree).is_dir():
+        return None
+    try:
+        proc = subprocess.run(["git", "-C", worktree, "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = proc.stdout.strip()
+    return sha if proc.returncode == 0 and sha else None
+
+
+def _live_run(root: Path, store: Store, t: Any, now: float) -> dict[str, Any]:
+    node = STATE_NODE[t.state]
+    started = store.latest_transition_ts(t.id, t.state)
+    if started is None:
+        started = store.ticket_updated_at(t.id)
+    elapsed = max(0.0, now - started) if started is not None else 0.0
+    # The agent is unknown during the first call of a stage: usage is recorded after the call.
+    usage = store.latest_usage(t.id)
+    raw = usage["agent"] if usage and usage.get("agent") else None
+    if raw is None:
+        kind = {State.IMPLEMENTING: "implement", State.IN_REVIEW: "review"}.get(t.state)
+        rows = store.stage_results(t.id, kind) if kind else []
+        raw = (_dict(rows[-1]["payload"]).get("agent") if rows else None) \
+            or t.sessions.get("coder_agent") or None
+    raw = str(raw) if raw else None
+    results = [r for k in ("plan", "gates", "review") for r in store.stage_results(t.id, k)]
+    return {
+        "issue": t.issue, "title": t.title, "state": t.state.value, "node": node,
+        "completed_nodes": NODES[:NODES.index(node)], "stage_started_at": started,
+        "elapsed_s": round(elapsed, 3), "agent": AGENT_LABELS.get(raw, raw) if raw else None,
+        "agent_raw": raw, "branch": t.branch, "worktree": t.worktree,
+        "commit": _head_sha(t.worktree) or (t.base_sha[:7] if t.base_sha else None),
+        "attempt": t.implement_attempts, "review_round": t.review_round,
+        "benchmark": _stage_benchmark(root, t.state, elapsed),
+        "feed": _feed(store.events(t.id), results),
+    }
+
+
+def collect_live(root: Path, *, now: float | None = None) -> dict[str, Any]:
+    """Read-only snapshot of in-flight tickets; never creates the db and skips a bad ticket."""
+    import time
+
+    from .runner import runner_status
+    now = time.time() if now is None else now
+    runs: list[tuple[float, dict[str, Any]]] = []
+    db = state_db_path(root)
+    if db.exists():
+        with Store(db) as store:
+            for t in store.list_tickets(*ACTIVE_STATES):
+                try:
+                    runs.append((store.ticket_updated_at(t.id) or 0.0, _live_run(root, store, t, now)))
+                except Exception:  # noqa: BLE001, S112 - one bad ticket must not hide the rest
+                    continue
+    runs.sort(key=lambda x: x[0], reverse=True)
+    return {"now": now, "runner": runner_status(root), "runs": [r for _, r in runs]}
+
+
 class UiHandler(http.server.BaseHTTPRequestHandler):
     root: Path
     host_factory = staticmethod(_default_host_factory)
@@ -968,6 +1305,12 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/ticket/") and len(path) > len("/api/ticket/"):
             query = urllib.parse.parse_qs(parts.query)
             self._ticket(path[len("/api/ticket/"):], query.get("brief") != ["0"])
+            return
+        if path == "/api/live":
+            try:
+                self._json(200, collect_live(self.root))
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": str(exc)})
             return
         if self.path == "/api/state":
             try:

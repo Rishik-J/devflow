@@ -269,6 +269,31 @@ class Store:
         with self._tx() as db:
             db.execute("DELETE FROM agent_cooldown WHERE agent=?", (agent,))
 
+    def latest_transition_ts(self, ticket_id: str, to: State | None = None) -> float | None:
+        """Timestamp of the newest transition event (optionally into `to`); read-only."""
+        rows = self._db.execute(
+            "SELECT payload, ts FROM events WHERE ticket_id=? AND kind='transition' ORDER BY id DESC",
+            (ticket_id,))
+        for r in rows:
+            if to is None:
+                return r["ts"]
+            try:
+                if json.loads(r["payload"]).get("to") == to.value:
+                    return r["ts"]
+            except (ValueError, AttributeError):
+                continue
+        return None
+
+    def ticket_updated_at(self, ticket_id: str) -> float | None:
+        row = self._db.execute("SELECT updated_at FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+        return row["updated_at"] if row else None
+
+    def latest_usage(self, ticket_id: str) -> dict[str, Any] | None:
+        row = self._db.execute(
+            "SELECT agent, role, ts FROM agent_usage WHERE ticket_id=? ORDER BY id DESC LIMIT 1",
+            (ticket_id,)).fetchone()
+        return dict(row) if row else None
+
     def stage_results(self, ticket_id: str, stage: str | None = None) -> list[dict[str, Any]]:
         sql, args = "SELECT * FROM stage_results WHERE ticket_id=?", [ticket_id]
         if stage:
