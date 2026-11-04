@@ -51,7 +51,7 @@
         <nav aria-label="Main navigation">
           <a href="#workflow">Workflow</a><a href="#code-graph">Code graph</a
           ><a href="#workbench">Workbench</a><a href="#trace">Trace</a
-          ><a href="#setup">Setup</a
+          ><a href="#setup">Setup</a><a href="#contact">Contact</a
           ><a class="nav-github" href="https://github.com/Rishik-J/devflow"
             >GitHub <span aria-hidden="true">↗</span></a
           >
@@ -83,7 +83,7 @@
           </div>
           <div
             class="graph-card"
-            aria-label="Devflow workflow graph showing connected systems, stages, tracing, and review feedback"
+            aria-label="Devflow system map: a read-only local UI observes the Python workflow controller, which coordinates coding agents, repository checks, review, and merge"
           >
             <div class="graph-header">
               <div>
@@ -229,7 +229,7 @@
                         width="25"
                         height="25" /></span
                     ><span class="node-number">03</span></span
-                  ><strong>Devflow engine</strong><small>Test gates</small>
+                  ><strong>Test gates</strong><small>Configured checks</small>
                 </button>
                 <button type="button" class="graph-node" data-graph-step="3">
                   <span class="node-top"
@@ -265,6 +265,22 @@
               ><span class="graph-edge-label graph-edge-label-loop"
                 >Review findings return to code</span
               >
+            </div>
+            <div class="graph-architecture" aria-label="Devflow application layers">
+              <div class="architecture-layer">
+                <span>LOCAL UI</span><strong>Board · live runs · analytics</strong>
+                <small>Read-only views of recorded state and traces</small>
+              </div>
+              <span class="architecture-connector" aria-hidden="true">← reads</span>
+              <div class="architecture-layer architecture-layer-control">
+                <span>WORKFLOW CONTROL</span><strong>Devflow · Python</strong>
+                <small>Routes agents, stages, gates, and approvals</small>
+              </div>
+              <span class="architecture-connector" aria-hidden="true">→ runs →</span>
+              <div class="architecture-layer">
+                <span>REPOSITORY EXECUTION</span><strong>Worktrees · checks · GitHub</strong>
+                <small>Code, verification, review, and merge evidence</small>
+              </div>
             </div>
             <div class="graph-footer">
               <span><i class="legend-line"></i> Handoff</span
@@ -428,12 +444,12 @@
             <div class="artifact">
               <div class="artifact-top">
                 <span class="artifact-dot"></span
-                ><strong>clean checkout / gates</strong
+                ><strong>coding worktree / gates</strong
                 ><span>ILLUSTRATIVE</span>
               </div>
               <div class="artifact-body">
                 <small>CONFIGURED TEST GATES</small>
-                <h3>Run the checks outside the agent workspace.</h3>
+                <h3>Run the repository's configured checks.</h3>
                 <div class="artifact-check">
                   <span>✓</span> unit <strong>passed</strong>
                 </div>
@@ -444,13 +460,13 @@
                   <span>✓</span> lint <strong>passed</strong>
                 </div>
                 <div class="artifact-result">
-                  Engine verdict <strong>gates passed</strong>
+                  Gate result <strong>checks passed</strong>
                 </div>
               </div>
             </div>
             <div class="stage-copy">
               <span class="stage-index">03 / VERIFY</span>
-              <h3>Evidence comes from the engine.</h3>
+              <h3>Verification leaves a record.</h3>
               <p>
                 Devflow runs configured gates against the coding worktree and
                 records each result. Review repeats verification in a detached
@@ -463,7 +479,7 @@
                     alt=""
                     width="23"
                     height="23"
-                  />Python engine</span
+                  />Python runner</span
                 ><span class="text-tech">Configured test commands</span>
               </div>
               <div class="stage-trace-link">
@@ -687,7 +703,7 @@
                   <span class="tree-branch" aria-hidden="true">├─</span
                   ><span
                     ><strong>stage.gates</strong
-                    ><small>Devflow · configured checks</small></span
+                    ><small>Repository · configured checks</small></span
                   ><i aria-hidden="true"></i></button
                 ><button type="button" data-trace-step="3">
                   <span class="tree-branch" aria-hidden="true">├─</span
@@ -772,23 +788,29 @@
         <div class="section-heading workbench-heading">
           <div>
             <span class="eyebrow">LOCAL WORKBENCH</span>
-            <h2 id="workbench-title">Open the ticket. See the evidence.</h2>
+            <h2 id="workbench-title">Watch the run. Inspect the evidence.</h2>
             <p>
-              <code>devflow ui</code> opens a local board. Select a ticket to
-              inspect its brief, plan, graph impact, gate results, and reviewer
-              findings in one place.
+              <code>devflow ui</code> serves a local, read-only board. Follow an
+              active run in the Live Flight Deck, open a ticket for its plan,
+              graph impact and gate results, or switch to Analytics to find
+              bottlenecks across runs.
             </p>
           </div>
           <a class="inline-link" href="https://github.com/Rishik-J/devflow/blob/main/README.md#dashboard-and-ticket-inspector">Dashboard guide <span aria-hidden="true">↗</span></a>
         </div>
-        <div class="workbench-frame" aria-label="Illustrative Devflow local ticket inspector">
-          <div class="workbench-toolbar"><span class="workbench-lights" aria-hidden="true"><i></i><i></i><i></i></span><strong>devflow / workbench</strong><span>127.0.0.1:8788</span></div>
+        <div class="workbench-frame" aria-label="Illustrative Devflow local board, live run, and ticket inspector">
+          <div class="workbench-toolbar"><span class="workbench-lights" aria-hidden="true"><i></i><i></i><i></i></span><strong>devflow / workbench</strong><span class="workbench-view-label">Board · Analytics</span><span>127.0.0.1:8788</span></div>
+          <div class="workbench-live"><span class="live-indicator" aria-hidden="true"></span><div><small>LIVE FLIGHT DECK · EXAMPLE</small><strong>#37 · Independent review</strong><span>Current stage · reviewer · worktree · recent activity</span></div><span class="workbench-live-time">elapsed / p99</span></div>
           <div class="workbench-content">
             <div class="workbench-board"><span class="workbench-label">IN REVIEW</span><div class="workbench-ticket"><small>#37 · GRAPH IMPACT</small><strong>Verify affected callers before merge</strong><span>Plan complete · Gates passed</span></div><div class="workbench-ticket workbench-ticket-muted"><small>#38 · MERGED</small><strong>Core blast-radius engine</strong><span>Reviewed commit recorded</span></div></div>
-            <div class="workbench-drawer"><div class="drawer-head"><small>TICKET INSPECTOR</small><strong>#37 <span>In review</span></strong></div><div class="drawer-tabs"><span>Overview</span><span>Plan</span><span class="drawer-tab-current">Blast radius</span><span>Gates</span></div><div class="drawer-body"><p>Review the affected surface</p><div><span>Changed symbol</span><strong>src/devflow/gates.py</strong></div><div><span>External callers</span><strong>Checked against diff</strong></div><div><span>Impacted tests</span><strong>Prioritized before full suite</strong></div><div><span>Review</span><strong>Findings tied to candidate SHA</strong></div></div><small class="drawer-caption">Example content; the inspector reads your local ticket state.</small></div>
+            <div class="workbench-drawer"><div class="drawer-head"><small>TICKET INSPECTOR</small><strong>#37 <span>In review</span></strong></div><div class="drawer-tabs"><span>Overview</span><span>Plan &amp; Decisions</span><span class="drawer-tab-current">Blast radius</span><span>Verification &amp; Gates</span></div><div class="drawer-body"><p>Review the affected surface</p><div><span>Changed symbol</span><strong>src/devflow/gates.py</strong></div><div><span>External callers</span><strong>Checked against diff</strong></div><div><span>Impacted tests</span><strong>Prioritized before full suite</strong></div><div><span>Review</span><strong>Findings tied to candidate SHA</strong></div></div><small class="drawer-caption">Example content; the inspector reads your local ticket state.</small></div>
           </div>
         </div>
-        <p class="workbench-note">The inspector is read-only. Its graph and gate details reflect evidence recorded by the installed Devflow version; older tickets can have empty sections.</p>
+        <div class="analytics-preview" aria-label="Illustrative view of the local analytics dashboard">
+          <div class="analytics-preview-heading"><div><span class="eyebrow">ANALYTICS / LOCAL</span><h3>Find the slow stage.</h3><p>Choose 24 hours, 7 days, or all time. The dashboard combines local traces with ticket records.</p></div><span>EXAMPLE VIEW · NO LIVE VALUES</span></div>
+          <div class="analytics-preview-grid"><div><small>CYCLE TIME</small><strong>Median</strong><span>From merged ticket transitions</span></div><div><small>STAGE LATENCY</small><strong>p50 · p90 · p99</strong><span>Bottleneck highlighted</span></div><div><small>REVIEW + GATES</small><strong>Friction</strong><span>Findings and failures</span></div><div><small>GRAPH IMPACT</small><strong>Blast radius</strong><span>Callers and coverage ratio</span></div></div>
+        </div>
+        <p class="workbench-note">The local UI only reads state; the Python workflow controls the run. The live deck polls while active, and Analytics refreshes on demand. Stage latency and stalls need telemetry enabled. Older tickets may have empty evidence sections.</p>
       </section>
       <section
         class="section setup-section shell"
@@ -844,6 +866,10 @@ uv tool install graphifyy</code></pre>
           >Follow the setup guide <span aria-hidden="true">↗</span></a
         >
       </section>
+      <section class="section contact-section shell" id="contact" aria-labelledby="contact-title">
+        <div><span class="eyebrow">CONTACT / COMMUNITY</span><h2 id="contact-title">Talk to us about Devflow.</h2><p>Have a workflow question, a bug report, or an idea? Open a GitHub issue and tell us what you are building. A dedicated contact channel is coming later.</p></div>
+        <div class="contact-actions"><a class="button button-dark" href="https://github.com/Rishik-J/devflow/issues/new">Open an issue <span aria-hidden="true">↗</span></a><a class="inline-link" href="https://github.com/Rishik-J/devflow">Explore the repository <span aria-hidden="true">↗</span></a></div>
+      </section>
       <section class="section closing">
         <div class="shell closing-inner">
           <div>
@@ -869,7 +895,8 @@ uv tool install graphifyy</code></pre>
           href="https://github.com/Rishik-J/devflow/blob/main/docs/getting-started.md"
           >Docs</a
         ><a href="https://github.com/Rishik-J/devflow/issues">Issues</a
-        ><a href="https://github.com/Rishik-J/devflow">GitHub</a>
+        ><a href="https://github.com/Rishik-J/devflow">GitHub</a
+        ><a href="#contact">Contact</a>
       </nav>
     </footer>
   </body>

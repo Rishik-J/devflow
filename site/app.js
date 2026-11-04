@@ -24,7 +24,7 @@ const traceStages = [
     name: "stage.gates",
     description:
       "Devflow runs configured checks against the coding worktree, prioritizes graph-matched pytest files when supported, and records each gate result. Review verifies the candidate in a detached checkout.",
-    component: "Devflow test engine",
+    component: "Configured repository checks",
     child: "gate.result · gate.order",
     evidence: "Gate type, ordering, exit status, output",
     note: "Gate outcomes appear in metadata mode. Commands and output require opt-in content capture.",
@@ -34,7 +34,7 @@ const traceStages = [
     name: "stage.in_review",
     description:
       "A reviewer checks the diff, test evidence, and a graph-derived blast-radius checklist. Blocking findings return the ticket to the coding agent.",
-    component: "Reviewer + Devflow engine",
+    component: "Review agent + workflow controller",
     child: "agent.<driver>.reviewer",
     evidence: "Affected callers, verdict, findings, reviewed SHA",
     note: "A review round can repeat build, gates, and review within the ticket session.",
