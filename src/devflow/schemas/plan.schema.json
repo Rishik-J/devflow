@@ -51,7 +51,12 @@
                         "why": { "type": "string", "minLength": 1 } }
       }
     },
-    "risks": { "type": "array", "items": { "type": "string" } }
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "requires": {
+      "type": "array",
+      "description": "Capabilities needed to verify this change: bind local sockets, run a browser, or reach the network. Leave empty if none.",
+      "items": { "enum": ["sockets", "browser", "network"] }
+    }
   },
   "allOf": [
     {

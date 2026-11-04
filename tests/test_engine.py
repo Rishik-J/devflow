@@ -1421,3 +1421,68 @@ def test_openclaw_usage_is_recorded_for_budgeting(env: Env):
         "SELECT agent, role, tokens_in FROM agent_usage WHERE ticket_id='#1'").fetchall()
     assert any(r["agent"] == "openclaw:devflow" and r["role"] == "planner" and r["tokens_in"] > 0
                for r in rows)
+
+
+# ---------------------------------------------------------------- capability routing
+
+SANDBOXED = "All failures were sandbox-denied socket binds; I changed nothing."
+
+
+def _prefer_codex(engine, codex_script):
+    from devflow.loadconfig import AgentBudget
+    engine.router.cfg.agents["codex"] = AgentBudget(priority=1)
+    engine.router.cfg.agents["claude"] = AgentBudget(priority=5)
+    engine.router.agents["codex"] = FakeAgent(codex_script, name="codex")
+    return engine.router.agents["codex"]
+
+
+def _codex_script(coder_reply):
+    def run(req):
+        if req.role == "coder":
+            return coder_reply(req)
+        if req.role == "test_planner":
+            return TEST_PLAN
+        return APPROVE
+    return run
+
+
+def test_ui_tickets_are_routed_to_an_agent_with_sockets(env: Env):
+    plan = {**PLAN, "steps": [{"id": "S1", "description": "serve", "files": ["src/ui_server.py"]}]}
+    engine = env.engine(planner=FakeAgent({"planner": [plan] * 3}))
+    codex = _prefer_codex(engine, _codex_script(lambda req: good_coder(req)))
+    engine.run(1)
+    env.say("alice", "/approve")
+    engine.run(1)
+    assert "coder" not in codex.roles()  # a no-socket agent never saw the coder task
+    assert "coder" in env.coder_agent.roles()
+
+
+def test_the_planner_can_declare_requirements(env: Env):
+    plan = {**PLAN, "requires": ["browser"]}
+    from devflow.states import Ticket
+    engine = env.engine(planner=FakeAgent({"planner": [plan] * 3}))
+    assert engine._requirements(Ticket(id="#1", issue=1), plan) == ("browser",)
+    assert engine._requirements(Ticket(id="#1", issue=1), PLAN) == ()
+
+
+def test_a_sandbox_blocked_agent_hands_the_ticket_to_one_with_sockets(env: Env):
+    engine = env.engine()
+    codex = _prefer_codex(engine, _codex_script(lambda req: SANDBOXED))
+    engine.run(1)
+    env.say("alice", "/approve")
+    out = engine.run(1)
+    assert out.status != "escalated"
+    assert "capability_retry" in {e["kind"] for e in env.store.events("#1")}
+    assert out.ticket.sessions["needs"] == "sockets"
+    assert "coder" in codex.roles() and "coder" in env.coder_agent.roles()
+    assert out.ticket.state is State.AWAITING_MERGE_APPROVAL
+
+
+def test_sandbox_blocked_with_no_capable_agent_escalates(env: Env):
+    engine = env.engine()
+    _prefer_codex(engine, _codex_script(lambda req: SANDBOXED))
+    engine.router.cfg.agents["claude"].capabilities = ()  # nobody has sockets
+    engine.run(1)
+    env.say("alice", "/approve")
+    out = engine.run(1)
+    assert out.status == "escalated" and "sandbox blocked the work" in out.reason

@@ -49,6 +49,7 @@ class AgentRequest:
     timeout_s: float = 2700
     model: str | None = None
     max_budget_usd: float | None = None
+    requires: tuple[str, ...] = ()  # capabilities the agent must have (sockets, browser, network)
     mcp: dict | None = None
     mcp_overrides: list[str] = field(default_factory=list)
     allowed_tools: list[str] | None = None

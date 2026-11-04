@@ -353,3 +353,60 @@ def test_the_real_five_hour_limit_message_is_a_limit_error():
     # Seen live on #66: this was not recognised, so Claude was never put on cooldown.
     from devflow.router import is_limit_error
     assert is_limit_error("claude coder failed: success: You've hit your 5-hour limit · resets 6:30pm")
+
+
+# ---------------------------------------------------------------- capabilities
+
+
+def caps_router(tmp_path, **budgets):
+    agents = {"claude": FakeAgent({"coder": ["ok"]}, name="claude"),
+              "codex": FakeAgent({"coder": ["ok"]}, name="codex")}
+    return make_router(tmp_path, agents, budgets=budgets)[0]
+
+
+def test_default_capabilities_codex_and_cursor_are_restricted(tmp_path):
+    router = caps_router(tmp_path)
+    assert router.capabilities("claude") == {"sockets", "browser", "network"}
+    assert router.capabilities("codex") == frozenset()
+    assert router.capabilities("cursor") == frozenset()
+    assert router.capabilities("someone-new") >= {"sockets"}  # unknown agents are not restricted
+
+
+def test_configured_capabilities_override_the_defaults(tmp_path):
+    router = caps_router(tmp_path, codex=AgentBudget(capabilities=("sockets",)))
+    assert router.capabilities("codex") == {"sockets"}
+
+
+def test_pick_with_a_requirement_skips_agents_that_lack_it(tmp_path):
+    router = caps_router(tmp_path, codex=AgentBudget(priority=1), claude=AgentBudget(priority=5))
+    assert router.pick("coder").name == "codex"  # no requirement: priority/headroom decides
+    assert router.pick("coder", require={"sockets"}).name == "claude"
+    assert router.capable_agents({"sockets"}) == ["claude"]
+
+
+def test_a_requirement_beats_the_session_preference(tmp_path):
+    router = caps_router(tmp_path)
+    assert router.pick("coder", prefer="codex", require={"browser"}).name == "claude"
+
+
+def test_no_capable_agent_is_a_distinct_error_not_a_pause(tmp_path):
+    from devflow.router import CapabilityUnavailable
+    router = caps_router(tmp_path, claude=AgentBudget(capabilities=()))
+    with pytest.raises(CapabilityUnavailable, match="sockets"):
+        router.pick("coder", require={"sockets"})
+
+
+def test_capable_agent_on_cooldown_pauses_instead_of_falling_back_to_a_restricted_one(tmp_path):
+    router, store, clock = make_router(
+        tmp_path, {"claude": FakeAgent({"coder": ["ok"]}, name="claude"),
+                   "codex": FakeAgent({"coder": ["ok"]}, name="codex")})
+    store.set_cooldown("claude", clock.t + 600, "usage limit", 1)
+    with pytest.raises(NoAgentAvailable):
+        router.pick("coder", require={"sockets"})
+    assert router.pick("coder").name == "codex"  # unrestricted work still proceeds
+
+
+def test_run_routed_carries_the_requirement(tmp_path):
+    router = caps_router(tmp_path, codex=AgentBudget(priority=1))
+    out = run_routed(router, req(tmp_path, requires=("browser",)), "#1")
+    assert out.agent == "claude"

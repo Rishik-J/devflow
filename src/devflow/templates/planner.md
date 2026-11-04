@@ -23,5 +23,10 @@ $gates_summary
    under `follow_ups` (a short title and why it matters) and they become separate backlog
    tickets. Only list problems you actually saw in the code, not speculation.
 
+## Capabilities
+If verifying the change needs to bind a local socket or port (a test server), run a browser, or
+reach the network, list those in `requires` (`sockets`, `browser`, `network`). Some coding agents
+run in a sandbox without them, and devflow routes the work to one that has them.
+
 ## Output
 JSON only, matching `.devflow/schemas/plan.schema.json`.
