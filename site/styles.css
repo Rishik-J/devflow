@@ -1783,6 +1783,14 @@ body.is-paused .edge-main.is-active {
 .contact-section h2 { margin-bottom: 17px; }
 .contact-section p { margin: 0; color: var(--muted); }
 .contact-actions { display: grid; justify-items: start; gap: 17px; flex: none; }
+.contact-socials { display: flex; align-items: center; gap: 10px; }
+.contact-icon { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid #cbd9c9; border-radius: 9px; color: #19321d; background: #f6faf4; text-decoration: none; }
+.contact-icon svg { width: 21px; height: 21px; fill: currentColor; }
+.contact-icon:hover { border-color: #72ac65; background: #eaf5e5; }
+.contact-icon-pending { color: #9ba99a; cursor: default; }
+.contact-icon-pending:hover { border-color: #cbd9c9; background: #f6faf4; }
+.graph-edge-label-trace { top: 75%; left: 68%; }
+.edge-trace:not(.edge-trace-export) { marker-end: none; }
 @media (min-width: 1200px) {
   .site-header.shell { width: min(1340px, calc(100% - 48px)); }
 }
