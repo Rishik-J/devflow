@@ -100,6 +100,8 @@ class Engine:
         self.board = board
         self.checkpoint: Callable[[], str] = lambda: ""
         self._ticket_id = ""
+        self.preflight: Callable[[], list] | None = None  # wired by runtime.build_engine
+        self._preflight_at, self._preflight_result = 0.0, []
         self._handlers: dict[State, Callable[[Ticket], None]] = {
             State.NEW: self._new,
             State.REFINING: self._refining,
@@ -159,6 +161,9 @@ class Engine:
                 return Outcome(ticket, "escalated", str(exc))
             except (AgentError, HostError, gitops.GitError, worktree.WorktreeError,
                     prompts.PromptError) as exc:
+                if (isinstance(exc, AgentError | HostError)
+                        and failures.classify(str(exc)) in (failures.INFRA, failures.LIMIT)):
+                    return self._infra_pause(ticket, before, exc)
                 if isinstance(exc, AgentError) and failures.classify(str(exc)) == failures.SANDBOX:
                     # Retrying the same agent in the same sandbox cannot change the answer.
                     reason = (f"{type(exc).__name__} in {before.value} looks like a sandbox "
@@ -191,6 +196,35 @@ class Engine:
             info = stall.check_stall(stage, elapsed, history)
             if info:
                 telemetry.report_stall(info)
+
+    MAX_INFRA_PAUSES = 8
+    PREFLIGHT_TTL_S = 60.0
+
+    def _infra_pause(self, ticket: Ticket, state: State, exc: Exception) -> Outcome:
+        """Something outside the ticket is down (OpenClaw, a rate limit). Wait; do not escalate."""
+        self.store.add_event(ticket.id, "infra_error", {"state": state.value, "error": str(exc)[:500]})
+        events = self.store.events(ticket.id)
+        last_move = max((i for i, e in enumerate(events) if e["kind"] == "transition"), default=-1)
+        n = sum(1 for e in events[last_move + 1:]
+                if e["kind"] == "infra_error" and e.get("state") == state.value)
+        if n >= self.MAX_INFRA_PAUSES:
+            reason = f"infrastructure kept failing in {state.value} ({n} attempts): {exc}"
+            self._escalate(ticket, reason)
+            return Outcome(ticket, "escalated", reason)
+        if n == 1:
+            self.notifier.send(f"#{ticket.issue} ({ticket.title}): paused, infrastructure problem: "
+                               f"{str(exc)[:120]}")
+        return Outcome(ticket, "paused", f"infrastructure problem, will retry ({n}/{self.MAX_INFRA_PAUSES}): {exc}")
+
+    def _run_preflight(self) -> None:
+        if self.preflight is None:
+            return
+        now = time.monotonic()
+        if not self._preflight_result or now - self._preflight_at > self.PREFLIGHT_TTL_S:
+            self._preflight_result, self._preflight_at = self.preflight(), now
+        from .preflight import blocking_failures, summarize
+        if blocking_failures(self._preflight_result):
+            raise _Wait("preflight failed: " + summarize(self._preflight_result))
 
     BUDGET_STATES = frozenset({State.NEW, State.REFINING, State.TEST_DESIGN, State.IMPLEMENTING,
                                State.GATES, State.IN_REVIEW, State.CHANGES_REQUESTED})
@@ -468,6 +502,7 @@ class Engine:
     # ------------------------------------------------------------------ NEW
 
     def _new(self, t: Ticket) -> None:
+        self._run_preflight()
         issue = self.host.get_issue(t.issue or 0)
         if issue.state != "open":
             self._move(t, State.CANCELLED, "engine", f"issue is {issue.state}")

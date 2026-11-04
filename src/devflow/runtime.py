@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from . import preflight
 from .agents import make_agent
 from .board import Board, DryRunBoard, GhBoard
 from .engine import Engine
@@ -43,6 +44,7 @@ def build_engine(
         cfg, store, DryRunHost(real) if dry_run else real, build_router(cfg, store), agents,
         make_notifier(cfg.notify_command), board=queue, dry_run=dry_run, log=log,
     )
+    engine.preflight = lambda: preflight.run_checks(cfg, engine.router, root)
     return engine, store, cfg
 
 
