@@ -1554,3 +1554,68 @@ def test_an_ordinary_agent_failure_still_escalates_after_two(env: Env):
     bad = FakeAgent({"planner": [AgentError("schema mismatch"), AgentError("schema mismatch")]})
     env.engine(planner=bad).run(1)
     assert env.engine(planner=bad).run(1).status == "escalated"
+
+
+# ---------------------------------------------------------------- plan linter wiring
+
+BAD_PLAN = {**PLAN, "steps": [{"id": "S1", "description": "edit CI", "files": [".github/workflows/ci.yml"]}]}
+
+
+def _lint_mode(engine, mode, retries=2):
+    engine.cfg.planning.lint = mode
+    engine.cfg.planning.lint_retries = retries
+    return engine
+
+
+def test_block_mode_sends_a_bad_plan_back_before_any_reviewer_sees_it(env: Env):
+    planner = FakeAgent({"planner": [BAD_PLAN, PLAN]})
+    engine = _lint_mode(env.engine(planner=planner), "block")
+    out = engine.run(1)
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
+    assert len(planner.calls) == 2
+    assert "Deterministic checks rejected this plan" in planner.calls[1].prompt
+    assert ".github/workflows/ci.yml" in planner.calls[1].prompt
+    assert engine._latest(out.ticket, "plan") == PLAN  # only the clean plan is the plan
+    assert env.store.stage_results("#1", "plan_draft")[0]["payload"] == BAD_PLAN
+    assert engine._count(out.ticket, "plan") == 1  # drafts do not use up MAX_PLAN_CYCLES
+    assert env.store.stage_results("#1", "plan_lint")[-1]["ok"] is True
+
+
+def test_block_mode_escalates_when_the_planner_cannot_fix_it(env: Env):
+    planner = FakeAgent({"planner": [BAD_PLAN] * 5})
+    out = _lint_mode(env.engine(planner=planner), "block", retries=1).run(1)
+    assert out.status == "escalated" and "deterministic checks" in out.reason
+    assert "protected_path" in out.reason and len(planner.calls) == 2
+
+
+def test_warn_mode_records_findings_but_lets_the_plan_through(env: Env):
+    planner = FakeAgent({"planner": [BAD_PLAN]})
+    out = env.engine(planner=planner).run(1)  # default mode is warn
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL and len(planner.calls) == 1
+    lint = env.store.stage_results("#1", "plan_lint")[-1]
+    assert lint["ok"] is False and lint["payload"]["findings"][0]["kind"] == "protected_path"
+
+
+def test_off_mode_does_not_lint(env: Env):
+    out = _lint_mode(env.engine(planner=FakeAgent({"planner": [BAD_PLAN]})), "off").run(1)
+    assert out.ticket.state is State.AWAITING_PLAN_APPROVAL
+    assert env.store.stage_results("#1", "plan_lint") == []
+
+
+def test_questions_are_not_linted(env: Env):
+    ask = {"status": "needs_clarification",
+           "questions": [{"question": "which?", "proposed_default": "this"}]}
+    out = _lint_mode(env.engine(planner=FakeAgent({"planner": [ask]})), "block").run(1)
+    assert out.ticket.state is State.AWAITING_CLARIFICATION
+    assert env.store.stage_results("#1", "plan_lint") == []
+
+
+def test_the_plan_reviewer_is_told_what_was_already_checked(env: Env):
+    e = Env(env.tmp / "auto", plan_gate=False, merge_gate=False)
+    engine = e.engine()
+    reviewer = FakeAgent({"reviewer": [{"decision": "approve", "reason": "ok"}]}, name="openclaw:devflow")
+    engine.agents["reviewer"] = reviewer
+    engine.run(1)
+    prompt = reviewer.calls[0].prompt
+    assert "Deterministic checks already ran on this plan" in prompt
+    e.store.close()

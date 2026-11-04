@@ -71,6 +71,14 @@ class BoardCfg:
 
 
 @dataclass
+class PlanningCfg:
+    """Deterministic plan checks. off = skip, warn = record only, block = send a failing plan back."""
+
+    lint: str = "warn"
+    lint_retries: int = 2
+
+
+@dataclass
 class LearningCfg:
     """How lessons are kept. Retro runs only if an agent is configured for the `retro` role."""
 
@@ -100,6 +108,7 @@ class Config:
     require_integration: bool = False
     board: BoardCfg = field(default_factory=BoardCfg)
     learning: LearningCfg = field(default_factory=LearningCfg)
+    planning: PlanningCfg = field(default_factory=PlanningCfg)
 
 
 def config_path(root: Path) -> Path:
@@ -204,6 +213,14 @@ def _learning(data: dict) -> LearningCfg:
     )
 
 
+def _planning(data: dict) -> PlanningCfg:
+    section = data.get("planning", {})
+    mode = section.get("lint", "warn")
+    if mode not in ("off", "warn", "block"):
+        raise ConfigError(f"[planning] lint must be 'off', 'warn' or 'block', got {mode!r}")
+    return PlanningCfg(lint=mode, lint_retries=int(_number(section, "lint_retries", 2, "[planning]")))
+
+
 def load_config(root: Path) -> Config:
     path = config_path(root)
     if not path.exists():
@@ -261,4 +278,5 @@ def load_config(root: Path) -> Config:
         require_integration=bool(data.get("review", {}).get("require_integration", False)),
         board=_board(data),
         learning=_learning(data),
+        planning=_planning(data),
     )

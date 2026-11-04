@@ -99,3 +99,20 @@ def test_agent_capabilities_parse_and_validate(tmp_path):
     cfg.write_text(base + 'capabilities = "sockets"\n')
     with pytest.raises(ConfigError, match="list of strings"):
         load_config(tmp_path)
+
+
+def test_planning_lint_mode_parses_and_validates(tmp_path):
+    import pytest
+
+    from devflow.loadconfig import ConfigError, load_config
+    (tmp_path / ".devflow").mkdir(exist_ok=True)
+    cfg = tmp_path / ".devflow/config.toml"
+    base = '[repo]\nname = "x"\n'
+    cfg.write_text(base)
+    assert load_config(tmp_path).planning.lint == "warn"
+    cfg.write_text(base + '[planning]\nlint = "block"\nlint_retries = 3\n')
+    planning = load_config(tmp_path).planning
+    assert planning.lint == "block" and planning.lint_retries == 3
+    cfg.write_text(base + '[planning]\nlint = "strict"\n')
+    with pytest.raises(ConfigError, match="lint must be"):
+        load_config(tmp_path)
