@@ -193,6 +193,27 @@ stage completes, not while it runs, and never affects ticket state, stage timeou
 calls. It is skipped when telemetry is disabled or no log file is configured. With few samples
 p99 is close to the maximum, so early detection is intentionally rare.
 
+## Workflow analytics dashboard
+
+`devflow ui` has an **Analytics** tab (also `/#analytics`) with a timeframe toggle (Last 24 Hours, Past 7 Days, All Time). It reads `GET /api/analytics?window=all|24h|7d` and never writes: it does not create `.devflow/state` or the SQLite db, and it does not poll (it loads on opening the tab, on changing the timeframe and on **Refresh analytics**). A missing or empty `window` means `all`; any other value returns HTTP 400 `{error}`. The response is strict JSON (no `NaN`/`Infinity`) with the keys `window`, `generated_at`, `telemetry` (`{available, spans}`), `kpis`, `stages`, `bottleneck`, `stalls`, `friction` and `blast`.
+
+The latency, stall and short-circuit panels come from `.devflow/state/traces.jsonl`, so they need telemetry enabled; without it the tab says so. Review friction, blast metrics, cycle time and first-pass rate come from the SQLite ticket store.
+
+| Metric | Definition | Source |
+| --- | --- | --- |
+| Median cycle time | Median of (first transition to `merged` transition) for tickets merged inside the window | store transition events |
+| First-pass approval | Merged tickets with no `changes_requested` transition, divided by merged tickets in the window | store transition events |
+| Blast short-circuit rate | `gate.order` events with `devflow.short_circuited` true, divided by all `gate.order` events | traces |
+| Total stalls | Count of non-synthetic `stall.detected` events | traces |
+| Stage latency | count, mean, p50, p90, p99, max per stage from `stage.*` spans: refining is Refining, test_design is Planning, implementing and changes_requested are Implementing, gates is Gates, in_review is Review. `awaiting_*` human-wait spans are excluded. `low_samples` is true below 5 spans | traces |
+| Bottleneck | The stage with the largest p50 among stages that have samples | traces |
+| Stall rate | Stalls in a stage divided by that stage's span count (capped at 1). A stage is `elevated` with at least one stall and a rate above 0.01 | traces |
+| Review friction | Review findings split into blocking and non-blocking, plus the number of reviewed tickets | store review results |
+| Gate failures | Top 10 labels by frequency, from new-failure fingerprints or else failing commands; redacted and capped at 200 characters | store gate results |
+| Hop-1 callers, coverage ratio | Mean hop-1 callers per ticket impact; impacted symbols not listed as `uncovered` divided by all impacted symbols, summed across tickets. Uses the latest gate impact, else the review impact | store gate and review results |
+
+Window filtering keeps spans and events whose `end_ns` is at or after now minus the window, and store rows whose `ts` is at or after that cutoff. Every value with no data is `null`, shown as an em dash. Agent reply text is never included.
+
 ## Logs and export failures
 
 Completed spans are appended to `.devflow/state/traces.jsonl`, then exported in batches to

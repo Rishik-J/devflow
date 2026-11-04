@@ -13,6 +13,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+from . import analytics
 from .detect import repo_root
 from .loadconfig import ConfigError, load_config
 from .states import State
@@ -329,6 +330,46 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .dr-bad { color: #f85149; font-weight: 600; }
     .dr-muted { color: #8b9a90; font-size: 13px; }
     .dr-body details { margin: 8px 0; }
+
+    /* ---- analytics view ---- */
+    .nav { display: flex; gap: 6px; }
+    .nav-btn { background: none; color: #8b949e; border: 1px solid transparent; padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; }
+    .nav-btn:hover { color: var(--heading); }
+    .nav-btn[aria-current="page"] { color: var(--heading); background: #21262d; border-color: var(--border); }
+    .nav-btn:focus-visible, .win-btn:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+    body.view-analytics #flight-deck, body.view-analytics .stats-bar, body.view-analytics #board-container { display: none; }
+    #analytics-view[hidden] { display: none; }
+    .an-bar-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+    .win-group { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .win-btn { background: #161b22; color: var(--text); border: none; border-right: 1px solid var(--border); padding: 6px 14px; font-size: 13px; cursor: pointer; }
+    .win-btn:last-child { border-right: none; }
+    .win-btn[aria-pressed="true"] { background: #1f6feb; color: #fff; font-weight: 600; }
+    .an-msg { background: var(--card-bg); border: 1px dashed var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; color: #8b949e; font-size: 13px; }
+    .an-msg[hidden] { display: none; }
+    .an-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .an-sub { font-size: 12px; color: #8b949e; margin-top: 2px; }
+    .an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .an-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-width: 0; }
+    .an-panel h2 { font-size: 14px; color: var(--heading); margin-bottom: 10px; font-weight: 600; }
+    .an-panel svg { width: 100%; height: auto; display: block; }
+    .an-note { font-size: 12px; color: #8b949e; margin-top: 8px; }
+    .an-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+    .an-table th, .an-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+    .an-table th:first-child, .an-table td:first-child { text-align: left; }
+    .an-table tr.bottleneck td { background: rgba(210, 153, 34, 0.16); font-weight: 600; }
+    .an-tag { display: inline-block; font-size: 11px; font-weight: 700; border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; margin-left: 6px; }
+    .an-tag.warn { color: #e3b341; }
+    .an-tag.low { color: #8b949e; font-weight: 500; }
+    .an-list { list-style: none; font-size: 13px; }
+    .an-list li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .an-list li.elevated { color: #f0883e; font-weight: 600; }
+    .an-hbar { display: grid; grid-template-columns: minmax(80px, 40%) 1fr auto; gap: 8px; align-items: center; font-size: 12px; margin-bottom: 6px; }
+    .an-hbar .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; }
+    .an-hbar .track { background: #21262d; border-radius: 3px; height: 12px; overflow: hidden; }
+    .an-hbar .fill { height: 100%; background: #58a6ff; transition: width 0.3s ease; }
+    .an-hbar .fill.blocking { background: #f85149; }
+    .an-hbar .fill.nitpick { background: #8b949e; }
+    @media (prefers-reduced-motion: reduce) { .an-hbar .fill { transition: none; } }
   </style>
 </head>
 <body>
@@ -340,6 +381,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <span class="live-dot"></span>Live tracking (board every 3s, flight deck every 2.5s)
       </span>
     </div>
+    <nav class="nav" aria-label="Views">
+      <button type="button" class="nav-btn" data-view="board" aria-current="page">Board</button>
+      <button type="button" class="nav-btn" data-view="analytics">Analytics</button>
+    </nav>
     <div>
       <button class="refresh-btn" onclick="fetchState()">Refresh</button>
     </div>
@@ -390,6 +435,58 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="board" id="board-container">
     <!-- Rendered via JavaScript -->
   </div>
+
+
+  <section id="analytics-view" aria-label="Workflow analytics" hidden>
+    <div class="an-bar-top">
+      <div class="win-group" role="group" aria-label="Timeframe" id="an-window">
+        <button type="button" class="win-btn" data-window="24h" aria-pressed="false">Last 24 Hours</button>
+        <button type="button" class="win-btn" data-window="7d" aria-pressed="false">Past 7 Days</button>
+        <button type="button" class="win-btn" data-window="all" aria-pressed="true">All Time</button>
+      </div>
+      <button type="button" class="refresh-btn" id="an-refresh">Refresh analytics</button>
+    </div>
+    <div class="an-msg" id="an-message" role="status" hidden></div>
+    <div class="an-kpis">
+      <div class="stat-card" id="kpi-cycle"><div class="stat-label">Median cycle time</div><div class="stat-val" data-role="value">&mdash;</div><div class="an-sub" data-role="sub"></div></div>
+      <div class="stat-card" id="kpi-firstpass"><div class="stat-label">First-pass approval</div><div class="stat-val" data-role="value">&mdash;</div><div class="an-sub" data-role="sub"></div></div>
+      <div class="stat-card" id="kpi-short"><div class="stat-label">Blast short-circuit rate</div><div class="stat-val" data-role="value">&mdash;</div><div class="an-sub" data-role="sub"></div></div>
+      <div class="stat-card" id="kpi-stalls"><div class="stat-label">Total stalls</div><div class="stat-val" data-role="value">&mdash;</div><div class="an-sub" data-role="sub"></div></div>
+    </div>
+    <div class="an-grid">
+      <div class="an-panel" id="stage-panel">
+        <h2>Stage latency (p50, with p99 marker)</h2>
+        <svg id="stage-chart" viewBox="0 0 640 220" role="img" aria-label="Stage latency chart"></svg>
+        <table class="an-table" id="stage-table" aria-label="Stage latency table">
+          <thead><tr><th>Stage</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>mean</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="an-note">Human wait states (awaiting_*) are excluded.</div>
+      </div>
+      <div class="an-panel" id="stall-panel">
+        <h2>Stall radar</h2>
+        <svg id="stall-radar" viewBox="0 0 320 280" role="img" aria-label="Stall radar"></svg>
+        <ul class="an-list" id="stall-list"></ul>
+        <div class="an-note" id="stall-total"></div>
+      </div>
+    </div>
+    <div class="an-grid">
+      <div class="an-panel" id="friction-panel">
+        <h2>Review and gate friction</h2>
+        <div id="friction-review"></div>
+        <h2 style="margin-top:14px">Most frequent gate failures</h2>
+        <div id="friction-gates"></div>
+      </div>
+      <div class="an-panel" id="blast-panel">
+        <h2>Blast radius</h2>
+        <ul class="an-list">
+          <li><span>Avg hop-1 callers per ticket</span><strong id="blast-avg">&mdash;</strong></li>
+          <li><span>Test coverage of impacted symbols</span><strong id="blast-coverage">&mdash;</strong></li>
+          <li><span>Tickets with impact data</span><strong id="blast-tickets">&mdash;</strong></li>
+        </ul>
+      </div>
+    </div>
+  </section>
 
   <div id="drawer-overlay">
     <aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title" tabindex="-1">
@@ -706,6 +803,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function syncFromHash() {
       const m = location.hash.match(/^#ticket-(\d+)$/);
+      setView(location.hash === '#analytics' ? 'analytics' : 'board');
       if (m) openTicket(parseInt(m[1], 10), true);
       else closeDrawer(false);
     }
@@ -884,6 +982,200 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     setInterval(fdTick, 1000);
     pollLive();
+
+    // ---------------------------------------------------------------- analytics view
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const AN_WINDOWS = ['24h', '7d', 'all'];
+    const an = { window: 'all', seq: 0, view: 'board' };
+    const DASH = '—';
+    function fmtDuration(s) {
+      if (s === null || s === undefined || !isFinite(s)) return DASH;
+      if (s < 1) return s.toFixed(1) + 's';
+      let t = Math.round(s);
+      if (t < 60) return t + 's';
+      const m = Math.floor(t / 60), sec = t % 60;
+      if (m < 60) return m + 'm ' + sec + 's';
+      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+    function fmtPct(r) {
+      if (r === null || r === undefined || !isFinite(r)) return DASH;
+      return (Math.round(r * 1000) / 10) + '%';
+    }
+    function fmtNum(n) { return n === null || n === undefined || !isFinite(n) ? DASH : String(Math.round(n * 100) / 100); }
+    function svgEl(tag, attrs, text) {
+      const e = document.createElementNS(SVG_NS, tag);
+      for (const k in (attrs || {})) e.setAttribute(k, String(attrs[k]));
+      if (text !== undefined) e.textContent = String(text);
+      return e;
+    }
+    function htmlEl(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = String(text);
+      return e;
+    }
+    function anMessage(msg) {
+      const box = fdEl('an-message');
+      box.hidden = !msg;
+      box.textContent = msg || '';
+    }
+    function setKpi(id, value, sub) {
+      const card = fdEl(id);
+      card.querySelector('[data-role="value"]').textContent = value;
+      card.querySelector('[data-role="sub"]').textContent = sub;
+    }
+    function renderKpis(k) {
+      const n = x => (x && x.samples !== undefined ? 'n = ' + x.samples : '');
+      setKpi('kpi-cycle', fmtDuration(k.median_cycle_seconds.value), n(k.median_cycle_seconds) + ' merged tickets');
+      setKpi('kpi-firstpass', fmtPct(k.first_pass_approval_rate.value), n(k.first_pass_approval_rate) + ' merged tickets');
+      setKpi('kpi-short', fmtPct(k.blast_short_circuit_rate.value), n(k.blast_short_circuit_rate) + ' gate orders');
+      const st = k.total_stalls.value;
+      setKpi('kpi-stalls', st === null || st === undefined ? DASH : String(st), 'stall.detected events');
+    }
+    function renderStages(stages, bottleneck) {
+      const svg = fdEl('stage-chart');
+      svg.textContent = '';
+      const body = fdEl('stage-table').querySelector('tbody');
+      body.textContent = '';
+      const any = stages.some(s => s.count > 0);
+      if (!any) {
+        svg.appendChild(svgEl('text', { x: 320, y: 110, 'text-anchor': 'middle', fill: '#8b949e', 'font-size': 14 }, 'No stage spans in this window'));
+      }
+      const defs = svgEl('defs');
+      const pat = svgEl('pattern', { id: 'hatch', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' });
+      pat.appendChild(svgEl('rect', { width: 6, height: 6, fill: '#d29922' }));
+      pat.appendChild(svgEl('line', { x1: 0, y1: 0, x2: 0, y2: 6, stroke: '#0d1117', 'stroke-width': 2 }));
+      defs.appendChild(pat);
+      svg.appendChild(defs);
+      const maxV = Math.max(1e-9, ...stages.map(s => Math.max(s.p99 || 0, s.p50 || 0)));
+      const left = 110, width = 440;
+      stages.forEach((s, i) => {
+        const y = 12 + i * 40;
+        const hot = s.stage === bottleneck;
+        svg.appendChild(svgEl('text', { x: 6, y: y + 18, fill: hot ? '#e3b341' : '#c9d1d9', 'font-size': 13, 'font-weight': hot ? 700 : 400 }, s.stage));
+        svg.appendChild(svgEl('rect', { x: left, y: y, width: width, height: 24, fill: '#21262d', rx: 3 }));
+        if (s.count > 0) {
+          const w = Math.max(2, (s.p50 / maxV) * width);
+          svg.appendChild(svgEl('rect', { x: left, y: y, width: w, height: 24, rx: 3, fill: hot ? 'url(#hatch)' : '#58a6ff', stroke: hot ? '#e3b341' : 'none', 'stroke-width': 1.5 }));
+          const px = left + (s.p99 / maxV) * width;
+          svg.appendChild(svgEl('line', { x1: px, y1: y - 2, x2: px, y2: y + 26, stroke: '#c9d1d9', 'stroke-width': 2 }));
+          svg.appendChild(svgEl('text', { x: Math.min(left + width - 2, Math.max(left + w, px) + 6), y: y + 17, fill: '#c9d1d9', 'font-size': 12 }, fmtDuration(s.p50) + (hot ? '  ▲ bottleneck' : '')));
+        } else {
+          svg.appendChild(svgEl('text', { x: left + 8, y: y + 17, fill: '#8b949e', 'font-size': 12 }, DASH + ' no samples'));
+        }
+      });
+      stages.forEach(s => {
+        const tr = document.createElement('tr');
+        if (s.stage === bottleneck) tr.className = 'bottleneck';
+        const first = document.createElement('td');
+        first.textContent = s.stage;
+        if (s.stage === bottleneck) first.appendChild(htmlEl('span', 'an-tag warn', 'Bottleneck'));
+        if (s.count > 0 && s.low_samples) first.appendChild(htmlEl('span', 'an-tag low', 'low n'));
+        tr.appendChild(first);
+        [String(s.count), fmtDuration(s.p50), fmtDuration(s.p90), fmtDuration(s.p99), fmtDuration(s.mean)].forEach(v => tr.appendChild(htmlEl('td', '', v)));
+        body.appendChild(tr);
+      });
+    }
+    function renderRadar(stalls) {
+      const svg = fdEl('stall-radar'), list = fdEl('stall-list');
+      svg.textContent = ''; list.textContent = '';
+      const rows = stalls.stages || [];
+      const cx = 160, cy = 140, R = 90, n = rows.length || 1;
+      const maxRate = Math.max(0.05, ...rows.map(r => r.rate || 0));
+      const pt = (i, f) => [cx + Math.sin(2 * Math.PI * i / n) * R * f, cy - Math.cos(2 * Math.PI * i / n) * R * f];
+      [0.33, 0.66, 1].forEach(f => svg.appendChild(svgEl('polygon', { points: rows.map((_, i) => pt(i, f).join(',')).join(' '), fill: 'none', stroke: '#30363d', 'stroke-width': 1 })));
+      rows.forEach((r, i) => svg.appendChild(svgEl('line', { x1: cx, y1: cy, x2: pt(i, 1)[0], y2: pt(i, 1)[1], stroke: '#30363d', 'stroke-width': 1 })));
+      svg.appendChild(svgEl('polygon', { points: rows.map((r, i) => pt(i, (r.rate || 0) / maxRate).join(',')).join(' '), fill: 'rgba(88,166,255,0.25)', stroke: '#58a6ff', 'stroke-width': 2 }));
+      rows.forEach((r, i) => {
+        const [x, y] = pt(i, (r.rate || 0) / maxRate);
+        if (r.elevated) {
+          svg.appendChild(svgEl('polygon', { points: [x, y - 8, x + 8, y + 6, x - 8, y + 6].join(','), fill: '#f0883e', stroke: '#fff', 'stroke-width': 1 }));
+        } else {
+          svg.appendChild(svgEl('circle', { cx: x, cy: y, r: 4, fill: '#58a6ff' }));
+        }
+        const [lx, ly] = pt(i, 1.28);
+        svg.appendChild(svgEl('text', { x: lx, y: ly + 4, 'text-anchor': 'middle', fill: r.elevated ? '#f0883e' : '#c9d1d9', 'font-size': 12, 'font-weight': r.elevated ? 700 : 400 }, (r.elevated ? '⚠ ' : '') + r.stage));
+        const li = htmlEl('li', r.elevated ? 'elevated' : '');
+        li.appendChild(htmlEl('span', '', r.stage + (r.elevated ? ' — ELEVATED' : '')));
+        li.appendChild(htmlEl('span', '', r.count + ' stall' + (r.count === 1 ? '' : 's') + ' · ' + fmtPct(r.rate)));
+        list.appendChild(li);
+      });
+      fdEl('stall-total').textContent = 'Total stalls: ' + (stalls.total === undefined ? DASH : stalls.total) + '. Elevated means at least one stall and a rate above 1% of that stage’s spans.';
+    }
+    function hbars(box, items, cls) {
+      const max = Math.max(1, ...items.map(i => i.count));
+      items.forEach(i => {
+        const row = htmlEl('div', 'an-hbar');
+        const lbl = htmlEl('span', 'lbl', i.label); lbl.title = i.label;
+        const track = htmlEl('span', 'track'); const fill = htmlEl('span', 'fill' + (i.cls ? ' ' + i.cls : ''));
+        fill.style.width = (i.count / max * 100) + '%'; track.appendChild(fill);
+        row.appendChild(lbl); row.appendChild(track); row.appendChild(htmlEl('span', '', i.count));
+        box.appendChild(row);
+      });
+    }
+    function renderFriction(f) {
+      const rev = fdEl('friction-review'), gates = fdEl('friction-gates');
+      rev.textContent = ''; gates.textContent = '';
+      const r = f.review || {};
+      if (!r.tickets) rev.appendChild(htmlEl('div', 'an-note', 'No review findings recorded in this window.'));
+      else {
+        hbars(rev, [{ label: 'Blocking findings', count: r.blocking, cls: 'blocking' }, { label: 'Nitpicks', count: r.nitpick, cls: 'nitpick' }]);
+        rev.appendChild(htmlEl('div', 'an-note', 'Across ' + r.tickets + ' reviewed ticket' + (r.tickets === 1 ? '' : 's') + '.'));
+      }
+      const g = f.gate_failures || [];
+      if (!g.length) gates.appendChild(htmlEl('div', 'an-note', 'No gate failures recorded in this window.'));
+      else hbars(gates, g.map(x => ({ label: x.label, count: x.count })));
+    }
+    function renderBlast(b) {
+      fdEl('blast-avg').textContent = fmtNum(b.avg_hop1_callers);
+      fdEl('blast-coverage').textContent = fmtPct(b.coverage_ratio);
+      fdEl('blast-tickets').textContent = b.tickets_with_impact === undefined ? DASH : String(b.tickets_with_impact);
+    }
+    function renderAnalytics(data) {
+      renderKpis(data.kpis);
+      renderStages(data.stages, data.bottleneck);
+      renderRadar(data.stalls);
+      renderFriction(data.friction);
+      renderBlast(data.blast);
+      if (!data.telemetry.available) anMessage('No telemetry recorded yet. Enable telemetry to see stage latency, stalls and short-circuit rates; review, gate and blast metrics come from the ticket store.');
+      else if (!data.telemetry.spans) anMessage('No spans fall inside this timeframe. Try a wider window.');
+      else anMessage('');
+    }
+    async function loadAnalytics() {
+      const seq = ++an.seq;
+      try {
+        const res = await fetch('/api/analytics?window=' + encodeURIComponent(an.window), { cache: 'no-store' });
+        const data = await res.json();
+        if (seq !== an.seq) return;
+        if (!res.ok) throw new Error(data && data.error ? data.error : 'HTTP ' + res.status);
+        renderAnalytics(data);
+      } catch (err) {
+        if (seq === an.seq) anMessage('Analytics unavailable: ' + (err && err.message ? err.message : err));
+      }
+    }
+    function setWindow(w) {
+      if (!AN_WINDOWS.includes(w)) return;
+      an.window = w;
+      document.querySelectorAll('#an-window .win-btn').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.window === w)));
+      loadAnalytics();
+    }
+    function setView(view) {
+      if (an.view === view) return;
+      an.view = view;
+      document.body.classList.toggle('view-analytics', view === 'analytics');
+      fdEl('analytics-view').hidden = view !== 'analytics';
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+      });
+      if (view === 'analytics') loadAnalytics();
+    }
+    document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.view === 'analytics') { if (location.hash !== '#analytics') location.hash = 'analytics'; else setView('analytics'); }
+      else { history.replaceState(null, '', location.pathname + location.search); syncFromHash(); }
+    }));
+    document.querySelectorAll('#an-window .win-btn').forEach(b => b.addEventListener('click', () => setWindow(b.dataset.window)));
+    fdEl('an-refresh').addEventListener('click', loadAnalytics);
+    if (location.hash === '#analytics') setView('analytics');
 
   </script>
 </body>
@@ -1275,8 +1567,8 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
     root: Path
     host_factory = staticmethod(_default_host_factory)
 
-    def _json(self, code: int, data: Any) -> None:
-        payload = json.dumps(data).encode("utf-8")
+    def _json(self, code: int, data: Any, strict: bool = False) -> None:
+        payload = json.dumps(data, allow_nan=not strict).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -1305,6 +1597,18 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/ticket/") and len(path) > len("/api/ticket/"):
             query = urllib.parse.parse_qs(parts.query)
             self._ticket(path[len("/api/ticket/"):], query.get("brief") != ["0"])
+            return
+        if path == "/api/analytics":
+            query = urllib.parse.parse_qs(parts.query)
+            try:
+                window = analytics.parse_window((query.get("window") or [""])[0])
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            try:
+                self._json(200, analytics.collect_analytics(self.root, window), strict=True)
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": str(exc)})
             return
         if path == "/api/live":
             try:

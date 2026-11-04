@@ -237,6 +237,8 @@ These are excerpts to edit in the generated file, not extra tables to append. Se
 
 The page also carries a sticky **Live Flight Deck** above the stats bar while a ticket is in flight. It reads the read-only `GET /api/live` (never creates the state db) which returns `{now, runner: {running, pid}, runs: [...]}`. `runs` holds tickets in `refining`, `test_design`, `implementing`, `gates` or `in_review`, most recently updated first, mapped to the stepper nodes 01 Refine, 02 Plan, 03 Implement, 04 Verify Gates, 05 Independent Review (a ticket sent back from gates shows Implement active). Each run has `elapsed_s` (since its latest transition into the current state), `agent`, `branch`, `worktree`, `commit`, a sanitized `feed` of the last 20 events (no raw agent replies) and `benchmark` `{p50, p99, samples, stalled}` taken from the `stage.<state>` spans in `traces.jsonl`. `stalled` is true only with at least 5 samples and elapsed above p99, the same rule as the engine's stall check; the deck then turns amber with a stall warning. The runner flag is advisory (pid liveness of the runner lock). The deck polls every 2.5 s while active and about every 10 s when idle.
 
+The header also has an **Analytics** tab (`/#analytics`) backed by the read-only `GET /api/analytics?window=all|24h|7d`: KPI cards, stage latency percentiles with the bottleneck highlighted, a stall radar, review and gate friction and blast-radius metrics, drawn as inline SVG with no external assets. Stage, stall and short-circuit panels need telemetry enabled; see [Workflow analytics](docs/observability.md#workflow-analytics-dashboard).
+
 See the [setup guide](docs/getting-started.md) for gate configuration, an existing Project, routing and troubleshooting.
 
 ## Code graph and learning
