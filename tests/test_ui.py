@@ -614,10 +614,11 @@ def test_template_has_no_external_resources_after_ledger():
         assert external not in HTML_TEMPLATE
 
 
-def _node_ledger(script_body: str) -> str:
+def _node_ledger(script_body: str) -> str | None:
+    """Run the extracted ledger JS under node; None when node is unavailable (like test_markdown_is_inert)."""
     node = shutil.which("node")
     if not node:
-        pytest.skip("node not available")
+        return None
     esc_start = HTML_TEMPLATE.index("function escapeHtml")
     esc = HTML_TEMPLATE[esc_start:HTML_TEMPLATE.index("}\n", esc_start) + 2]
     safe_start = HTML_TEMPLATE.index("function safeUrl")
@@ -648,6 +649,8 @@ const sum = summarizeRuns(runs);
 console.log(JSON.stringify({res, pages, emptyAll: renderLedgerRows([], 0), emptyMatch: renderLedgerRows([], 4),
   zero: summarizeRuns([]), emptyLabel: empty.label, sum}));
 """)
+    if out is None:
+        return
     import json as _j
     d = _j.loads(out)
     r = d["res"]
@@ -670,4 +673,6 @@ console.log(renderLedgerRows([{issue: 1, title: '<img src=x onerror=alert(1)>', 
   outcome_label: '<b>M</b>', pr_url: 'javascript:alert(1)', pr_number: 3, agent: '<script>',
   review_rounds: 2, implement_attempts: 1, max_implement_attempts: 3, blast: {}}], 1));
 """)
+    if out is None:
+        return
     assert "<img" not in out and "<script" not in out and "<b>" not in out and "javascript:" not in out
