@@ -15,7 +15,7 @@ from typing import Any
 
 from .detect import repo_root
 from .loadconfig import ConfigError, load_config
-from .states import State
+from .states import Limits, State
 from .store import Store, state_db_path
 
 HOST_TIMEOUT_S = 5.0
@@ -276,6 +276,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .dr-bad { color: #f85149; font-weight: 600; }
     .dr-muted { color: #8b9a90; font-size: 13px; }
     .dr-body details { margin: 8px 0; }
+    .view-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+    .view-tab { background: var(--card-bg); color: var(--text); border: none; border-right: 1px solid var(--border); padding: 7px 16px; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .view-tab:last-child { border-right: none; }
+    .view-tab[aria-selected="true"] { background: #21262d; color: var(--heading); box-shadow: inset 0 -2px 0 var(--accent); }
+    .view-tab:focus-visible, .chip-btn:focus-visible, .sort-btn:focus-visible, .runs-row:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+    .runs-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    .runs-search { background: var(--card-bg); color: var(--heading); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px; min-width: 240px; }
+    .chip-btn { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+    .chip-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: #388bfd26; }
+    .runs-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+    .runs-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card-bg); }
+    .runs-table th, .runs-table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .runs-table th { color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+    .sort-btn { background: none; border: none; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+    .runs-row { cursor: pointer; }
+    .runs-row:hover { background: #1c2128; }
+    .run-title { color: var(--heading); font-weight: 500; margin-top: 4px; overflow-wrap: anywhere; }
+    .pr-link { color: #3fb950; text-decoration: none; font-size: 12px; }
+    .pr-link:hover { text-decoration: underline; }
+    .outcome { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); white-space: nowrap; }
+    .outcome-merged { color: #3fb950; border-color: rgba(35,134,54,.5); background: rgba(35,134,54,.15); }
+    .outcome-rejected_review { color: #f85149; border-color: rgba(218,54,51,.5); background: rgba(218,54,51,.15); }
+    .outcome-failed_gates { color: #f0883e; border-color: rgba(240,136,62,.5); background: rgba(240,136,62,.15); }
+    .outcome-stalled { color: #d29922; border-color: rgba(210,153,34,.5); background: rgba(210,153,34,.15); }
+    .outcome-cancelled { color: #8b949e; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; background: #21262d; border: 1px solid var(--border); margin: 0 4px 4px 0; }
+    .runs-empty { text-align: center; color: #8b949e; padding: 32px !important; }
+    .runs-pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: #8b949e; }
+    .runs-pager button:disabled, .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+    @media (max-width: 800px) { .runs-table { min-width: 760px; } .runs-search { min-width: 0; width: 100%; } }
   </style>
 </head>
 <body>
@@ -292,6 +322,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </header>
 
+  <div class="view-switch" role="tablist" aria-label="Views" id="view-switch">
+    <button class="view-tab" role="tab" type="button" id="tab-board" data-view="board" aria-selected="true" aria-controls="panel-board" tabindex="0">Board View</button>
+    <button class="view-tab" role="tab" type="button" id="tab-runs" data-view="runs" aria-selected="false" aria-controls="panel-runs" tabindex="-1">Runs Ledger</button>
+    <button class="view-tab" role="tab" type="button" id="tab-analytics" data-view="analytics" aria-selected="false" aria-controls="panel-analytics" tabindex="-1">Analytics</button>
+  </div>
+
+  <div id="panel-board" role="tabpanel" aria-labelledby="tab-board">
   <div class="stats-bar">
     <div class="stat-card">
       <div class="stat-label">Working Now</div>
@@ -313,6 +350,44 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   <div class="board" id="board-container">
     <!-- Rendered via JavaScript -->
+  </div>
+  </div>
+
+  <div id="panel-runs" role="tabpanel" aria-labelledby="tab-runs" hidden>
+    <div class="runs-toolbar">
+      <input class="runs-search" id="runs-search" type="search" placeholder="Search title, #issue or agent" aria-label="Search runs">
+      <span id="runs-chips" role="group" aria-label="Filter runs">
+        <button class="chip-btn" type="button" data-filter="all" aria-pressed="true">All Runs</button>
+        <button class="chip-btn" type="button" data-filter="merged" aria-pressed="false">Merged Only</button>
+        <button class="chip-btn" type="button" data-filter="failed" aria-pressed="false">Failed / Blocked</button>
+        <button class="chip-btn" type="button" data-filter="multi" aria-pressed="false">Multi-round Reviews</button>
+      </span>
+      <button class="refresh-btn" id="runs-export" type="button" disabled>Export Runs JSON</button>
+    </div>
+    <div class="runs-wrap">
+      <table class="runs-table">
+        <thead><tr>
+          <th scope="col">Ticket/PR</th>
+          <th scope="col">Outcome</th>
+          <th scope="col" aria-sort="descending" id="th-date"><button class="sort-btn" type="button" data-sort="date">Duration &amp; Timeline</button> <button class="sort-btn" type="button" data-sort="duration" title="Sort by duration">&#8693;</button></th>
+          <th scope="col" id="th-rounds"><button class="sort-btn" type="button" data-sort="rounds">Iterations</button></th>
+          <th scope="col">Blast Radius</th>
+          <th scope="col">Actions</th>
+        </tr></thead>
+        <tbody id="runs-body"></tbody>
+      </table>
+    </div>
+    <div class="runs-pager">
+      <span id="runs-showing"></span>
+      <span>
+        <button class="refresh-btn" id="runs-prev" type="button">Prev</button>
+        <button class="refresh-btn" id="runs-next" type="button">Next</button>
+      </span>
+    </div>
+  </div>
+
+  <div id="panel-analytics" role="tabpanel" aria-labelledby="tab-analytics" hidden>
+    <div class="stats-bar" id="analytics-body"></div>
   </div>
 
   <div id="drawer-overlay">
@@ -665,6 +740,212 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       if (card && /^\d+$/.test(card.dataset.issue || '')) { e.preventDefault(); openTicket(parseInt(card.dataset.issue, 10), false); }
     });
 
+    // ---------------------------------------------------------------- runs ledger
+    // ledger-pure-start (no DOM access: filter -> search -> sort -> paginate, rendering, summary)
+    const RUNS_PAGE_SIZE = 25;
+    const OUTCOME_LABELS = { merged: 'Merged', rejected_review: 'Rejected (Review)', failed_gates: 'Failed (Gates)', stalled: 'Stalled', cancelled: 'Cancelled' };
+    const EMPTY_NO_RUNS = 'No finished runs yet. Merged, rejected and stalled tickets will appear here.';
+    const EMPTY_NO_MATCH = 'No runs match the current filters.';
+
+    function runMatchesFilter(r, filter) {
+      if (filter === 'merged') return r.outcome === 'merged';
+      if (filter === 'failed') return ['rejected_review', 'failed_gates', 'stalled', 'cancelled'].includes(r.outcome);
+      if (filter === 'multi') return (r.review_rounds || 0) >= 2;
+      return true;
+    }
+    function runMatchesSearch(r, q) {
+      const needle = String(q || '').trim().toLowerCase();
+      if (!needle) return true;
+      const num = needle.replace(/^#/, '');
+      return String(r.title || '').toLowerCase().includes(needle)
+        || String(r.agent || '').toLowerCase().includes(needle)
+        || (/^\d+$/.test(num) && String(r.issue) === num);
+    }
+    function sortRuns(runs, key, dir) {
+      const sign = dir === 'asc' ? 1 : -1;
+      const val = (r) => key === 'duration' ? r.duration_s : key === 'rounds' ? r.review_rounds : r.completed_at;
+      return runs.map((r, i) => [r, i]).sort((a, b) => {
+        const x = val(a[0]), y = val(b[0]);
+        const nx = x === null || x === undefined, ny = y === null || y === undefined;
+        if (nx || ny) return nx && ny ? a[1] - b[1] : (nx ? 1 : -1);   // unknown values always last
+        return x === y ? a[1] - b[1] : (x - y) * sign;
+      }).map(p => p[0]);
+    }
+    function runsView(runs, st) {
+      const filtered = (runs || []).filter(r => runMatchesFilter(r, st.filter) && runMatchesSearch(r, st.q));
+      const sorted = sortRuns(filtered, st.sort, st.dir);
+      const pages = Math.max(1, Math.ceil(sorted.length / RUNS_PAGE_SIZE));
+      const page = Math.min(Math.max(1, st.page || 1), pages);
+      const start = (page - 1) * RUNS_PAGE_SIZE;
+      const items = sorted.slice(start, start + RUNS_PAGE_SIZE);
+      const label = sorted.length ? `Showing ${start + 1}-${start + items.length} of ${sorted.length}` : 'Showing 0 of 0';
+      return { all: sorted, items, page, pages, label };
+    }
+    function fmtDuration(s) {
+      if (s === null || s === undefined) return '—';
+      s = Math.round(s);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ' + (s % 60) + 's';
+      const h = Math.floor(m / 60);
+      return h + 'h ' + (m % 60) + 'm';
+    }
+    function fmtWhen(ts) {
+      return ts === null || ts === undefined ? '—' : new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    }
+    function renderLedgerRows(items, totalRuns) {
+      if (!items.length) {
+        return `<tr><td class="runs-empty" colspan="6">${escapeHtml(totalRuns ? EMPTY_NO_MATCH : EMPTY_NO_RUNS)}</td></tr>`;
+      }
+      return items.map(r => {
+        const pr = safeUrl(r.pr_url);
+        const prHtml = pr ? `<a class="pr-link" href="${escapeHtml(pr)}" target="_blank" rel="noopener noreferrer"><svg width="12" height="12" viewBox="0 0 16 16" fill="#3fb950" aria-hidden="true"><circle cx="4" cy="3" r="2"/><circle cx="4" cy="13" r="2"/><circle cx="12" cy="13" r="2"/><rect x="3.3" y="4" width="1.4" height="8"/><rect x="11.3" y="6" width="1.4" height="6"/></svg> PR #${escapeHtml(r.pr_number)}</a>` : '';
+        const b = r.blast || {};
+        const rounds = r.review_rounds || 0;
+        return `<tr class="runs-row" tabindex="0" data-issue="${escapeHtml(r.issue)}">
+          <td><span class="badge">#${escapeHtml(r.issue)}</span> ${prHtml}<div class="run-title">${escapeHtml(r.title)}</div>${r.agent ? `<div class="dr-muted">${escapeHtml(r.agent)}</div>` : ''}</td>
+          <td><span class="outcome outcome-${escapeHtml(r.outcome)}">${escapeHtml(r.outcome_label || OUTCOME_LABELS[r.outcome] || r.outcome)}</span></td>
+          <td>${escapeHtml(fmtDuration(r.duration_s))}<div class="dr-muted">${escapeHtml(fmtWhen(r.completed_at))}</div></td>
+          <td><span class="pill">${escapeHtml(r.implement_attempts)}/${escapeHtml(r.max_implement_attempts)}</span><span class="pill">${escapeHtml(rounds)} ${rounds === 1 ? 'round' : 'rounds'}</span></td>
+          <td>${escapeHtml(b.files || 0)} files &middot; ${escapeHtml(b.callers || 0)} callers<div class="dr-muted">${escapeHtml(b.covered || 0)} covered / ${escapeHtml(b.uncovered || 0)} uncovered</div></td>
+          <td><button class="refresh-btn inspect-btn" type="button" data-issue="${escapeHtml(r.issue)}">Inspect</button></td>
+        </tr>`;
+      }).join('');
+    }
+    function summarizeRuns(runs) {
+      runs = runs || [];
+      const counts = { merged: 0, rejected_review: 0, failed_gates: 0, stalled: 0, cancelled: 0 };
+      let rounds = 0;
+      const durs = [];
+      for (const r of runs) {
+        if (r.outcome in counts) counts[r.outcome]++;
+        rounds += r.review_rounds || 0;
+        if (typeof r.duration_s === 'number') durs.push(r.duration_s);
+      }
+      durs.sort((a, b) => a - b);
+      const mid = durs.length >> 1;
+      const median = !durs.length ? null : (durs.length % 2 ? durs[mid] : (durs[mid - 1] + durs[mid]) / 2);
+      return { total: runs.length, mergedRate: runs.length ? counts.merged / runs.length : null,
+               medianDuration: median, avgRounds: runs.length ? rounds / runs.length : null, counts };
+    }
+    // ledger-pure-end
+
+    let currentView = 'board';
+    let runsData = [];
+    let runsJson = '';
+    const ledger = { filter: 'all', q: '', sort: 'date', dir: 'desc', page: 1 };
+
+    function renderLedger() {
+      const v = runsView(runsData, ledger);
+      ledger.page = v.page;
+      document.getElementById('runs-body').innerHTML = renderLedgerRows(v.items, runsData.length);
+      document.getElementById('runs-showing').textContent = v.label;
+      document.getElementById('runs-prev').disabled = v.page <= 1;
+      document.getElementById('runs-next').disabled = v.page >= v.pages;
+      document.getElementById('runs-export').disabled = v.all.length === 0;
+      document.querySelectorAll('#runs-chips [data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === ledger.filter)));
+      document.querySelectorAll('.runs-table [data-sort]').forEach(b => {
+        const on = b.dataset.sort === ledger.sort;
+        b.closest('th').setAttribute('aria-sort', on ? (ledger.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+      });
+    }
+
+    function renderAnalytics() {
+      const a = summarizeRuns(runsData);
+      const card = (label, val) => `<div class="stat-card"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-val">${escapeHtml(val)}</div></div>`;
+      const pct = a.mergedRate === null ? '—' : Math.round(a.mergedRate * 100) + '%';
+      const per = Object.keys(a.counts).map(k => `${OUTCOME_LABELS[k]}: ${a.counts[k]}`).join(' · ');
+      document.getElementById('analytics-body').innerHTML =
+        card('Total runs', a.total) + card('Merged rate', pct) + card('Median duration', fmtDuration(a.medianDuration))
+        + card('Avg review rounds', a.avgRounds === null ? '—' : a.avgRounds.toFixed(1))
+        + `<div class="stat-card" style="flex: 2;"><div class="stat-label">Outcomes</div><div class="dr-muted">${escapeHtml(per)}</div></div>`;
+    }
+
+    async function fetchRuns() {
+      try {
+        const res = await fetch('/api/runs', { cache: 'no-store' });
+        if (!res.ok) throw new Error('API error: ' + res.status);
+        const data = await res.json();
+        const json = JSON.stringify(data.runs || []);
+        if (json === runsJson) return;          // unchanged: keep DOM, focus and scroll
+        runsJson = json;
+        runsData = data.runs || [];
+        if (currentView === 'runs') renderLedger(); else if (currentView === 'analytics') renderAnalytics();
+      } catch (err) {
+        console.error('Failed to fetch runs:', err);
+      }
+    }
+
+    function setView(name) {
+      currentView = name;
+      for (const v of ['board', 'runs', 'analytics']) {
+        document.getElementById('panel-' + v).hidden = v !== name;
+        const t = document.getElementById('tab-' + v);
+        t.setAttribute('aria-selected', String(v === name));
+        t.tabIndex = v === name ? 0 : -1;
+      }
+      if (name !== 'board') { runsJson = ''; fetchRuns().then(() => { if (currentView === 'runs') renderLedger(); else if (currentView === 'analytics') renderAnalytics(); }); }
+    }
+
+    function exportRuns() {
+      const v = runsView(runsData, ledger);
+      if (!v.all.length) return;
+      const blob = new Blob([JSON.stringify(v.all, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'runs.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    const viewSwitch = document.getElementById('view-switch');
+    viewSwitch.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]');
+      if (b) setView(b.dataset.view);
+    });
+    viewSwitch.addEventListener('keydown', (e) => {
+      const order = ['board', 'runs', 'analytics'];
+      const i = order.indexOf(currentView);
+      let n = -1;
+      if (e.key === 'ArrowRight') n = (i + 1) % order.length;
+      else if (e.key === 'ArrowLeft') n = (i + order.length - 1) % order.length;
+      else if (e.key === 'Home') n = 0;
+      else if (e.key === 'End') n = order.length - 1;
+      if (n >= 0) { e.preventDefault(); setView(order[n]); document.getElementById('tab-' + order[n]).focus(); }
+    });
+    document.getElementById('runs-search').addEventListener('input', (e) => { ledger.q = e.target.value; ledger.page = 1; renderLedger(); });
+    document.getElementById('runs-chips').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-filter]');
+      if (b) { ledger.filter = b.dataset.filter; ledger.page = 1; renderLedger(); }
+    });
+    document.querySelector('.runs-table thead').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-sort]');
+      if (!b) return;
+      if (ledger.sort === b.dataset.sort) ledger.dir = ledger.dir === 'asc' ? 'desc' : 'asc';
+      else { ledger.sort = b.dataset.sort; ledger.dir = 'desc'; }
+      ledger.page = 1;
+      renderLedger();
+    });
+    document.getElementById('runs-prev').addEventListener('click', () => { ledger.page = Math.max(1, ledger.page - 1); renderLedger(); });
+    document.getElementById('runs-next').addEventListener('click', () => { ledger.page += 1; renderLedger(); });
+    document.getElementById('runs-export').addEventListener('click', exportRuns);
+    const runsBody = document.getElementById('runs-body');
+    runsBody.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;      // the PR link must not open the drawer
+      const el = e.target.closest('[data-issue]');
+      if (el && /^\d+$/.test(el.dataset.issue || '')) openTicket(parseInt(el.dataset.issue, 10), false);
+    });
+    runsBody.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('a') || e.target.closest('button')) return;
+      const row = e.target.closest('.runs-row');
+      if (row && /^\d+$/.test(row.dataset.issue || '')) { e.preventDefault(); openTicket(parseInt(row.dataset.issue, 10), false); }
+    });
+    setInterval(() => { if (currentView !== 'board') fetchRuns(); }, 3000);
+
     fetchState();
     setInterval(fetchState, 3000);
   </script>
@@ -933,6 +1214,98 @@ def collect_ticket(root: Path, issue: int, *, host_factory=None,
         "trace": read_trace(root, issue),
     }
 
+RUN_OUTCOME_LABELS = {
+    "merged": "Merged", "rejected_review": "Rejected (Review)", "failed_gates": "Failed (Gates)",
+    "stalled": "Stalled", "cancelled": "Cancelled",
+}
+_REVIEW_STAGES = {"in_review", "changes_requested", "awaiting_merge_approval"}
+_GATE_STAGES = {"gates", "implementing", "test_design"}
+_END_STAGES = {"merged", "escalated", "cancelled"}
+
+
+def _classify_outcome(ticket: Any, transitions: list[dict[str, Any]]) -> str:
+    """Deterministic outcome of a finished run.
+
+    MERGED -> merged; CANCELLED -> cancelled; ESCALATED -> rejected_review when the last
+    non-terminal stage reached was review-related, failed_gates when it was gates/implementing/
+    test_design, otherwise stalled. `transitions` are chronological dicts with a "to" key.
+    """
+    if ticket.state is State.MERGED:
+        return "merged"
+    if ticket.state is State.CANCELLED:
+        return "cancelled"
+    last = ""
+    for tr in reversed(transitions):
+        # history entries (the no-events fallback) also carry the stage the move came from
+        for key in ("to", "from"):
+            stage = str(_dict(tr).get(key) or "")
+            if stage and stage not in _END_STAGES:
+                last = stage
+                break
+        if last:
+            break
+    if last in _REVIEW_STAGES:
+        return "rejected_review"
+    if last in _GATE_STAGES:
+        return "failed_gates"
+    return "stalled"
+
+
+def _num(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _run_blast(impact: Any) -> dict[str, int]:
+    b = _blast_section(impact)
+    if b["status"] != "available":
+        return {"files": 0, "callers": 0, "symbols": 0, "uncovered": 0, "covered": 0}
+    symbols, uncovered = len(b["symbols"]), len(b["uncovered"])
+    return {"files": len(b["files"]), "callers": len(b["callers"]), "symbols": symbols,
+            "uncovered": uncovered, "covered": max(symbols - uncovered, 0)}
+
+
+def _run_for(store: Store, ticket: Any, slug: str) -> dict[str, Any]:
+    events = store.events(ticket.id, "transition")
+    transitions = events or [h for h in ticket.history if isinstance(h, dict)]
+    stamps = [t for t in (_num(e.get("ts")) for e in events) if t is not None]
+    started = min(stamps) if stamps else None
+    completed = max(stamps) if stamps else None
+    duration = round(completed - started, 3) if started is not None and completed is not None else None
+    outcome = _classify_outcome(ticket, transitions)
+    impl = store.stage_results(ticket.id, "implement")
+    gates = store.stage_results(ticket.id, "gates")
+    agent = (_dict(impl[-1]["payload"]).get("agent") if impl else None) \
+        or ticket.sessions.get("coder_agent") or None
+    pr = ticket.sessions.get("pr")
+    pr_number = int(pr) if str(pr or "").isdigit() else None
+    return {
+        "issue": ticket.issue, "title": ticket.title, "state": ticket.state.value,
+        "outcome": outcome, "outcome_label": RUN_OUTCOME_LABELS[outcome],
+        "pr_url": f"https://github.com/{slug}/pull/{pr_number}" if pr_number else None,
+        "pr_number": pr_number, "started_at": started, "completed_at": completed,
+        "duration_s": duration, "implement_attempts": ticket.implement_attempts,
+        "max_implement_attempts": Limits().max_implement_attempts,
+        "review_rounds": ticket.review_round, "agent": agent,
+        "blast": _run_blast(_dict(gates[-1]["payload"]).get("impact") if gates else None),
+    }
+
+
+def collect_runs(root: Path) -> dict[str, Any]:
+    """Finished runs (merged, escalated, cancelled), newest first. Never creates state."""
+    db = state_db_path(root)
+    if not db.exists():
+        return {"runs": [], "total": 0}
+    slug = _repo_slug(root)
+    runs: list[dict[str, Any]] = []
+    with Store(db) as store:
+        for ticket in reversed(store.list_tickets(State.MERGED, State.ESCALATED, State.CANCELLED)):
+            try:
+                runs.append(_run_for(store, ticket, slug))
+            except Exception:  # noqa: BLE001, S112 - one bad row must not fail the ledger
+                continue
+    runs.sort(key=lambda r: -(r["completed_at"] or 0))  # stable: keeps updated_at order for ties
+    return {"runs": runs, "total": len(runs)}
+
 
 class UiHandler(http.server.BaseHTTPRequestHandler):
     root: Path
@@ -968,6 +1341,12 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/ticket/") and len(path) > len("/api/ticket/"):
             query = urllib.parse.parse_qs(parts.query)
             self._ticket(path[len("/api/ticket/"):], query.get("brief") != ["0"])
+            return
+        if path == "/api/runs":
+            try:
+                self._json(200, collect_runs(self.root))
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": str(exc)})
             return
         if self.path == "/api/state":
             try:

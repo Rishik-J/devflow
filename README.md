@@ -235,6 +235,8 @@ These are excerpts to edit in the generated file, not extra tables to append. Se
 
 `devflow ui` serves a local board at `http://127.0.0.1:8788/`. Click a ticket card (or open `/#ticket-<n>`) to slide in a read-only inspector with Overview, Plan & Decisions, Blast radius and Verification & Gates tabs. Esc or a click outside closes it. The drawer reads `GET /api/ticket/<issue>`, which returns the ticket's state, latest plan and test strategy, persisted gate results and impact report, review verdict and findings, matching trace spans (names, durations, outcomes) and the GitHub issue body when `gh` is available (otherwise `brief.available` is `false`). Unknown issues return 404 and invalid ids 400. Gate evidence is recorded by runs made after this feature; older tickets show empty sections.
 
+The page has a Board View / Runs Ledger / Analytics switcher. The Runs Ledger lists every finished ticket (merged, rejected in review, failed gates, stalled, cancelled) from `GET /api/runs` (`{runs, total}`, newest first; durations come from SQLite transition events, and an empty list is returned when there is no `devflow.db`). Search, filter chips, sorting, 25-per-page pagination and the `runs.json` export all run client-side; Inspect opens the ticket drawer. Outcomes are inferred from the last stage reached before escalation.
+
 See the [setup guide](docs/getting-started.md) for gate configuration, an existing Project, routing and troubleshooting.
 
 ## Code graph and learning
