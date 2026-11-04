@@ -16,7 +16,14 @@ import pytest
 
 from devflow.states import State, Ticket
 from devflow.store import Store, state_db_path
-from devflow.ui import HTML_TEMPLATE, LIFECYCLE, UiHandler, collect_state, collect_ticket
+from devflow.ui import (
+    HTML_TEMPLATE,
+    LIFECYCLE,
+    UiHandler,
+    collect_live,
+    collect_state,
+    collect_ticket,
+)
 
 
 def test_html_template_has_vital_elements():
@@ -411,3 +418,247 @@ def test_refresh_without_brief_does_not_call_host(tmp_path: Path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ---------------------------------------------------------------- live flight deck
+
+def live_ticket(store: Store, issue: int, state: State, **kw) -> Ticket:
+    t = Ticket(id=f"#{issue}", state=state, issue=issue, title=f"T{issue}", **kw)
+    store.save_ticket(t)
+    return t
+
+
+def write_spans(root: Path, name: str, durations: list[float], status: str = "ok") -> None:
+    path = root / ".devflow" / "state" / "traces.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as fh:
+        for d in durations:
+            fh.write(json.dumps({"name": name, "status": status, "start_ns": 0,
+                                 "end_ns": int(d * 1e9)}) + "\n")
+
+
+def test_live_no_db(tmp_path: Path):
+    res = collect_live(tmp_path)
+    assert res["runs"] == [] and set(res["runner"]) == {"running", "pid"}
+    assert "now" in res and not state_db_path(tmp_path).exists()
+
+
+def test_live_endpoint(tmp_path: Path):
+    server, port = serve(tmp_path)
+    try:
+        for path in ("/api/live", "/api/live?x=1"):
+            code, _, data = get(port, path)
+            assert code == 200 and {"now", "runner", "runs"} <= set(data) and data["runs"] == []
+        assert not state_db_path(tmp_path).exists()
+        assert get(port, "/api/state")[0] == 200
+    finally:
+        server.shutdown(); server.server_close()
+
+
+def test_live_endpoint_error(tmp_path: Path, monkeypatch):
+    from devflow import ui
+
+    def boom(root):
+        raise RuntimeError("nope")
+    monkeypatch.setattr(ui, "collect_live", boom)
+    server, port = serve(tmp_path)
+    try:
+        code, _, data = get(port, "/api/live")
+        assert code == 500 and data["error"] == "nope"
+        assert get(port, "/api/state")[0] == 200
+    finally:
+        server.shutdown(); server.server_close()
+
+
+def test_runner_status(tmp_path: Path):
+    import os
+
+    from devflow.runner import ownership, runner_status
+    assert runner_status(tmp_path) == {"running": False, "pid": None}  # not a git repo
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    lock = tmp_path / ".git" / "devflow-runner.lock"
+    assert runner_status(tmp_path) == {"running": False, "pid": None} and not lock.exists()
+    lock.write_text("garbage")
+    assert runner_status(tmp_path)["running"] is False
+    lock.write_text("999999999")
+    assert runner_status(tmp_path)["running"] is False
+    lock.write_text(str(os.getpid()))
+    assert runner_status(tmp_path) == {"running": True, "pid": os.getpid()}
+    with ownership(tmp_path):
+        assert runner_status(tmp_path)["pid"] == os.getpid()
+
+
+def test_live_filters_orders_and_maps(tmp_path: Path):
+    store = Store(state_db_path(tmp_path))
+    for i, st in enumerate(State, start=1):
+        live_ticket(store, i, st)
+        time.sleep(0.01)
+    store.close()
+    runs = collect_live(tmp_path)["runs"]
+    got = [r["state"] for r in runs]
+    assert set(got) == {"refining", "test_design", "implementing", "gates", "in_review"}
+    ids = [r["issue"] for r in runs]
+    assert ids == sorted(ids, reverse=True)
+    by = {r["state"]: r for r in runs}
+    assert by["refining"]["node"] == "refine" and by["refining"]["completed_nodes"] == []
+    assert by["test_design"]["node"] == "plan"
+    assert by["in_review"]["node"] == "review"
+    assert by["in_review"]["completed_nodes"] == ["refine", "plan", "implement", "gates"]
+    for r in runs:
+        assert {"issue", "title", "state", "node", "completed_nodes", "stage_started_at", "elapsed_s",
+                "agent", "branch", "worktree", "commit", "attempt", "review_round",
+                "benchmark", "feed"} <= set(r)
+
+
+def test_live_retry_from_gates(tmp_path: Path):
+    store = Store(state_db_path(tmp_path))
+    t = live_ticket(store, 5, State.GATES)
+    store.transition(t, State.IMPLEMENTING, actor="engine", reason="retry")
+    store.close()
+    r = collect_live(tmp_path)["runs"][0]
+    assert r["node"] == "implement" and r["completed_nodes"] == ["refine", "plan"]
+
+
+def test_live_elapsed(tmp_path: Path):
+    store = Store(state_db_path(tmp_path))
+    live_ticket(store, 1, State.GATES)
+    t = store.get_ticket("#1")
+    store.add_event("#1", "transition", {"to": "gates"})
+    ts = store.latest_transition_ts("#1", State.GATES)
+    assert store.latest_transition_ts("#1") == ts and store.latest_transition_ts("#1", State.MERGED) is None
+    live_ticket(store, 2, State.GATES)
+    upd = store.ticket_updated_at("#2")
+    store.close()
+    assert t is not None
+    runs = {r["issue"]: r for r in collect_live(tmp_path, now=ts + 30)["runs"]}
+    assert runs[1]["elapsed_s"] == pytest.approx(30)
+    assert runs[2]["elapsed_s"] == pytest.approx(max(0, ts + 30 - upd), abs=1e-2)
+    assert collect_live(tmp_path, now=0)["runs"][0]["elapsed_s"] == 0
+
+
+def test_live_benchmark(tmp_path: Path):
+    from devflow import stall
+    store = Store(state_db_path(tmp_path))
+    live_ticket(store, 1, State.GATES)
+    store.close()
+    ts = Store(state_db_path(tmp_path)).ticket_updated_at("#1")
+    b = collect_live(tmp_path, now=ts + 1000)["runs"][0]["benchmark"]
+    assert b == {"p50": None, "p99": None, "samples": 0, "stalled": False}  # missing log
+    write_spans(tmp_path, "stage.gates", [10, 11, 12, 13])
+    write_spans(tmp_path, "stage.gates", [99], status="error")
+    write_spans(tmp_path, "stage.implementing", [500] * 6)
+    log = tmp_path / ".devflow" / "state" / "traces.jsonl"
+    with log.open("a") as fh:
+        fh.write("not json\n")
+    b = collect_live(tmp_path, now=ts + 1000)["runs"][0]["benchmark"]
+    assert b["samples"] == 4 and b["p99"] is None and b["stalled"] is False
+    write_spans(tmp_path, "stage.gates", [14])
+    vals = [10, 11, 12, 13, 14]
+    for elapsed, stalled in ((1000, True), (5, False)):
+        b = collect_live(tmp_path, now=ts + elapsed)["runs"][0]["benchmark"]
+        assert b["p50"] == pytest.approx(stall.percentile(vals, 50))
+        assert b["p99"] == pytest.approx(stall.percentile(vals, 99), abs=1e-3)
+        assert b["stalled"] is stalled
+        assert (stall.check_stall("g", elapsed, vals) is not None) is stalled
+    log.write_text("")
+    assert collect_live(tmp_path)["runs"][0]["benchmark"]["stalled"] is False
+
+
+def test_live_feed(tmp_path: Path):
+    store = seed(tmp_path)
+    for i in range(25):
+        store.add_event("#38", "transition", {"to": "gates", "actor": "engine", "reason": f"r{i}"})
+    store.add_event("#38", "error", {"state": "gates", "error": "boom", "reply": "SECRET-EVENT"})
+    add(store, "plan", {"goal": "x", "reply": "SECRET-PLAN"})
+    add(store, "gates", {"results": [{"command": "ruff check .", "exit_code": 0, "duration_s": 1.4},
+                                     {"command": "pytest", "exit_code": 1, "duration_s": 2.0}],
+                         "reply": "SECRET-GATES"})
+    add(store, "review", {"verdict": "approve", "reply": "SECRET-REVIEW"})
+    store.close()
+    feed = collect_live(tmp_path)["runs"][0]["feed"]
+    assert len(feed) == 20
+    assert [e["ts"] for e in feed] == sorted(e["ts"] for e in feed)
+    assert all(set(e) == {"ts", "level", "text"} and e["level"] in ("info", "ok", "fail") for e in feed)
+    texts = [e["text"] for e in feed]
+    assert "Gate: ruff check . ran in 1.4s (PASS)" in texts
+    assert "Gate: pytest ran in 2.0s (FAIL)" in texts
+    assert any(e["level"] == "fail" and "boom" in e["text"] for e in feed)
+    assert any("Review verdict: approve" in t for t in texts)
+    assert "SECRET" not in json.dumps(feed)
+
+
+def test_live_agent_resolution(tmp_path: Path):
+    store = seed(tmp_path, state=State.IMPLEMENTING)
+    r = collect_live(tmp_path)["runs"][0]
+    assert r["agent"] == "Claude Code"  # sessions coder_agent
+    add(store, "implement", {"agent": "codex"})
+    assert collect_live(tmp_path)["runs"][0]["agent"] == "Codex"
+    store.record_usage("openclaw", "planner", "#38", cost_usd=0)
+    assert collect_live(tmp_path)["runs"][0]["agent"] == "OpenClaw Planner"
+    store.record_usage("mystery", "coder", "#38", cost_usd=0)
+    assert collect_live(tmp_path)["runs"][0]["agent"] == "mystery"
+    assert store.latest_usage("#38")["agent"] == "mystery"
+    live_ticket(store, 2, State.REFINING)
+    assert {x["issue"]: x["agent"] for x in collect_live(tmp_path)["runs"]}[2] is None
+    store.close()
+
+
+def test_live_commit_and_robustness(tmp_path: Path, monkeypatch):
+    store = Store(state_db_path(tmp_path))
+    live_ticket(store, 1, State.GATES, worktree=str(tmp_path / "missing"), base_sha="abcdef0123")
+    live_ticket(store, 2, State.GATES)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    subprocess.run(["git", "-C", str(wt), "-c", "user.name=a", "-c", "user.email=a@b", "commit",
+                    "-q", "--allow-empty", "-m", "x"], check=True)
+    live_ticket(store, 3, State.GATES, worktree=str(wt), base_sha="ffffffff")
+    store.close()
+    runs = {r["issue"]: r for r in collect_live(tmp_path)["runs"]}
+    assert runs[1]["commit"] == "abcdef0" and runs[2]["commit"] is None
+    head = subprocess.run(["git", "-C", str(wt), "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    assert runs[3]["commit"] == head
+    from devflow import ui
+
+    def bad(*a, **k):
+        raise subprocess.TimeoutExpired("git", 2)
+    monkeypatch.setattr(subprocess, "run", bad)
+    assert collect_live(tmp_path)["runs"]
+    real = ui._live_run
+
+    def flaky(root, st, t, now):
+        if t.issue == 1:
+            raise ValueError("corrupt")
+        return real(root, st, t, now)
+    monkeypatch.setattr(ui, "_live_run", flaky)
+    assert sorted(r["issue"] for r in collect_live(tmp_path)["runs"]) == [2, 3]
+
+
+def test_live_json_is_raw_data(tmp_path: Path):
+    store = Store(state_db_path(tmp_path))
+    live_ticket(store, 1, State.GATES, branch="<img src=x>", sessions={"coder_agent": "<b>x</b>"})
+    store.close()
+    server, port = serve(tmp_path)
+    try:
+        run = get(port, "/api/live")[2]["runs"][0]
+        assert run["branch"] == "<img src=x>" and run["agent"] == "<b>x</b>"
+    finally:
+        server.shutdown(); server.server_close()
+
+
+def test_flight_deck_template_markers():
+    t = HTML_TEMPLATE
+    assert t.index('id="flight-deck"') < t.index('class="stats-bar"')
+    for m in ("['refine', '01', 'Refine']", "['plan', '02', 'Plan']", "['implement', '03', 'Implement']",
+              "['gates', '04', 'Verify Gates']", "['review', '05', 'Independent Review']",
+              "' more'", "'Copied'", "navigator.clipboard",
+              "document.execCommand", "/api/live", "performance.now()", "p50 ", "p99 ",
+              "Stall Warning: Stage exceeding 99th percentile", "FD_ACTIVE_MS = 2500",
+              "FD_IDLE_MS = 10000", "fd.busy", "setTimeout(pollLive", "aria-live=\"polite\"",
+              "min-height", "setInterval(fetchState, 3000)", "@media (max-width: 640px)",
+              "@media (prefers-reduced-motion: reduce)", "@keyframes fd-glow", "@keyframes fd-flow",
+              "keep the last good view", "scrollTop = feed.scrollHeight", "feedSig"):
+        assert m in t, m
+    deck_js = t[t.index("live flight deck", t.index("<script>")):]
+    assert "innerHTML" not in deck_js
