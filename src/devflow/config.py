@@ -101,6 +101,8 @@ def render_config(
         "max_implement_attempts = 3",
         "stage_timeout_minutes = 45",
         "gate_timeout_minutes = 20",
+        "# max_ticket_cost_usd = 10   # stop and escalate a ticket once it has spent this much (0 = off)",
+        "# max_ticket_tokens = 0       # same, counted in input + output tokens (0 = off)",
         "",
         "[human_gates]",
         "plan_approval = true",
