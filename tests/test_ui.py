@@ -662,3 +662,130 @@ def test_flight_deck_template_markers():
         assert m in t, m
     deck_js = t[t.index("live flight deck", t.index("<script>")):]
     assert "innerHTML" not in deck_js
+
+
+# ---------------------------------------------------------------- analytics endpoint & template
+ANALYTICS_KEYS = {"window", "generated_at", "telemetry", "kpis", "stages", "bottleneck", "stalls",
+                  "friction", "blast"}
+
+
+def _raw_get(port: int, path: str):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}") as r:
+            return r.status, r.headers, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read().decode()
+
+
+def test_analytics_endpoint_windows_and_errors(tmp_path: Path):
+    log = tmp_path / ".devflow/state/traces.jsonl"
+    log.parent.mkdir(parents=True)
+    now = time.time_ns()
+    rec = {"name": "stage.gates", "start_ns": now - 5_000_000_000, "end_ns": now, "status": "ok",
+           "attributes": {}}
+    log.write_text(json.dumps(rec) + "\n" + json.dumps({**rec, "start_ns": float("nan")}) + "\n")
+    server, port = serve(tmp_path)
+    try:
+        code, headers, body = _raw_get(port, "/api/analytics")
+        data = json.loads(body, parse_constant=lambda c: pytest.fail("non-strict JSON: " + c))
+        assert code == 200 and ANALYTICS_KEYS <= set(data) and data["window"] == "all"
+        assert headers["Cache-Control"] == "no-cache" and "application/json" in headers["Content-Type"]
+        gates = next(s for s in data["stages"] if s["stage"] == "Gates")
+        assert gates["count"] == 1 and data["bottleneck"] == "Gates"
+        for window in ("24h", "7d", "all"):
+            code, _, data = get(port, f"/api/analytics?window={window}")
+            assert code == 200 and data["window"] == window
+        code, _, data = get(port, "/api/analytics?window=")
+        assert code == 200 and data["window"] == "all"
+        code, _, data = get(port, "/api/analytics?window=bogus")
+        assert code == 400 and "error" in data
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_analytics_endpoint_no_db_no_traces_creates_nothing(tmp_path: Path):
+    server, port = serve(tmp_path)
+    try:
+        code, _, data = get(port, "/api/analytics")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert code == 200 and data["telemetry"] == {"available": False, "spans": 0}
+    assert all(k["value"] is None for k in data["kpis"].values()) and data["bottleneck"] is None
+    assert not (tmp_path / ".devflow").exists() and not state_db_path(tmp_path).exists()
+
+
+def test_analytics_endpoint_unexpected_failure_is_500(tmp_path: Path, monkeypatch):
+    from devflow import analytics
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(analytics, "collect_analytics", boom)
+    server, port = serve(tmp_path)
+    try:
+        code, _, data = get(port, "/api/analytics")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert code == 500 and data == {"error": "kaboom"}
+
+
+def test_other_endpoints_keep_their_shape(tmp_path: Path):
+    full_store(tmp_path)
+    server, port = serve(tmp_path, FakeIssueHost)
+    try:
+        assert {"columns", "repo"} <= set(get(port, "/api/state")[2])
+        assert set(get(port, "/api/live")[2]) == {"now", "runner", "runs"}
+        assert KEYS <= set(get(port, "/api/ticket/38")[2])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_analytics_template_markers():
+    t = HTML_TEMPLATE
+    for marker in ('data-view="board"', 'data-view="analytics"', 'id="analytics-view"',
+                   "Last 24 Hours", "Past 7 Days", "All Time", 'id="kpi-cycle"', 'id="kpi-firstpass"',
+                   'id="kpi-short"', 'id="kpi-stalls"', 'id="stage-chart"', 'id="stall-radar"',
+                   'id="stage-table"', 'id="friction-review"', 'id="friction-gates"', 'id="blast-avg"',
+                   "function fmtDuration", "function fmtPct", "function escapeHtml", "createElementNS",
+                   "const DASH = '—'", "/api/analytics?window=", "No telemetry recorded", "No stage spans",
+                   "prefers-reduced-motion", "Bottleneck", "ELEVATED", "#analytics"):
+        assert marker in t, marker
+    assert "setInterval(loadAnalytics" not in t and "setInterval(fetchAnalytics" not in t
+
+
+def _analytics_js() -> str:
+    return HTML_TEMPLATE.split("// ---------------------------------------------------------------- analytics view")[1]
+
+
+def test_analytics_template_is_offline_and_inert():
+    import re
+    t = HTML_TEMPLATE
+    assert "<script src" not in t and "<link" not in t and "@import" not in t
+    assert "<img" not in t and "url(http" not in t
+    urls = set(re.findall(r"https?://[^\s'\"<>)]+", t))
+    assert all(u.startswith(("https://github.com/", "http://www.w3.org/2000/svg")) for u in urls), urls
+    js = _analytics_js()
+    assert "innerHTML" not in js and "insertAdjacentHTML" not in js
+    assert "textContent" in js
+
+
+def test_fmt_duration_contract():
+    js = _analytics_js().split("function fmtDuration")[1].split("function fmtPct")[0]
+    # the formatter's literal rules: seconds below a minute, then "Xm Ys"
+    assert "t + 's'" in js and "m + 'm ' + sec + 's'" in js
+
+
+def test_hash_routing_keeps_ticket_links_and_board_machinery():
+    t = HTML_TEMPLATE
+    sync = t.split("function syncFromHash()")[1].split("window.addEventListener('hashchange'")[0]
+    assert "#ticket-(\\d+)" in sync and "openTicket(parseInt(m[1], 10), true)" in sync
+    assert "location.hash === '#analytics'" in sync and "closeDrawer(false)" in sync
+    # board/flight-deck are hidden by a body class, so listeners and polling stay intact
+    assert "body.view-analytics #flight-deck" in t and "body.view-analytics #board-container" in t
+    for kept in ("setInterval(fetchState, 3000)", "pollLive();", "boardEl.addEventListener('click'",
+                 "e.key === 'Tab' && overlay.classList.contains('open')"):
+        assert kept in t, kept
