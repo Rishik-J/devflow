@@ -10,7 +10,7 @@ Repository-aware engineering workflows, orchestrated with OpenClaw and executed 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[Website](https://rishik-j.github.io/devflow/) · [Get started](#quick-start) · [Setup guide](docs/getting-started.md) · [Local tracing](#local-traces-and-workflow-metrics) · [Architecture](DESIGN.md) · [Contributing](CONTRIBUTING.md)
+[Website](https://rishik-j.github.io/devflow/) · [Get started](#quick-start) · [Setup guide](docs/getting-started.md) · [UI lane](docs/ui-lane.md) · [Local tracing](#local-traces-and-workflow-metrics) · [Architecture](DESIGN.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 

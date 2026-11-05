@@ -11,8 +11,8 @@ from .graphify import GraphResult
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 SCHEMA_DIR = Path(__file__).parent / "schemas"
-PROMPTS = ("planner", "test_planner", "coder", "reviewer", "triage", "retro")
-SCHEMAS = ("plan", "test_plan", "review", "triage", "lesson")
+PROMPTS = ("planner", "test_planner", "coder", "reviewer", "triage", "retro", "ui_evaluator")
+SCHEMAS = ("plan", "test_plan", "review", "triage", "lesson", "ui_evaluation")
 
 
 def _s(value: str) -> str:
@@ -53,7 +53,7 @@ def render_routing(available: list[str]) -> list[str]:
         "# their budget window. limit_usd = 0 means no local cap (rate-limit errors still",
         "# trigger a cooldown). Set limit_usd to your own comfort level per window.",
         "[routing]",
-        'roles = ["coder", "reviewer", "test_planner"]',
+        'roles = ["coder", "reviewer", "test_planner", "ui_evaluator"]',
         'strategy = "headroom"   # or "priority": always prefer the lowest priority number',
         "cooldown_minutes = 30",
         "cooldown_max_hours = 6",

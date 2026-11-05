@@ -22,3 +22,11 @@ $gates_summary
 ## When review feedback arrives
 Address each blocking finding, or explain concisely why it should not change. Re-run the gates.
 Do not make unrelated changes in the same round.
+
+## UI tickets
+If the plan has `ui_use_cases`, the repo's browser lane will run a deterministic Playwright suite.
+Write scenarios whose pytest tests use the `ui_page` fixture and are tagged with the use-case ids
+they cover, for example `@ui_case("UC1", "UC2")` (from `devflow.uirunner`). Every use case id in
+the plan must be covered by at least one scenario. The lane fails on any console warning or
+error, uncaught page error, failed request, or HTTP 4xx/5xx response, so fix those instead of
+ignoring them.

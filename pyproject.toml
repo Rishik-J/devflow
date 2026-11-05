@@ -33,6 +33,7 @@ packages = ["src/devflow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["ui_case(*ids): the plan use-case ids a browser scenario covers (devflow.uirunner)"]
 
 [tool.ruff]
 line-length = 100
