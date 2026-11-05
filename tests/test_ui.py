@@ -347,6 +347,7 @@ def test_ticket_endpoint_live(tmp_path: Path):
             assert code == 400 and "error" in body
         assert get(port, "/api/ticket/")[0] == 404
         assert get(port, "/api/state")[0] == 200
+        assert get(port, "/api/state?source=board")[0] == 200
     finally:
         server.shutdown()
         server.server_close()
