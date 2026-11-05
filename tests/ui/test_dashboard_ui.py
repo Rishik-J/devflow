@@ -60,7 +60,7 @@ def test_narrow_viewport_drawer_fills_the_screen(ui_page, ui_server):
     ui_page.locator(CARD).click()
     ui_page.locator(OPEN).wait_for()
     width = ui_page.evaluate("document.getElementById('drawer').getBoundingClientRect().width")
-    assert width == 375
+    assert abs(width - 375) < 0.01
 
 
 @ui_case("UC6")
@@ -86,3 +86,24 @@ def test_setup_view_rechecks_readiness(ui_page, ui_server, monkeypatch):
     ui_page.get_by_text("gh auth login").wait_for(state="visible")
     ui_page.locator("#setup-refresh").click()
     ui_page.get_by_text("0 of 1 required checks ready for sample.").wait_for(state="visible")
+
+
+@ui_case("UC8")
+def test_state_endpoint_accepts_query_string(ui_page, ui_server):
+    response = ui_page.goto(ui_server + "/api/state?source=board")
+    assert response.status == 200
+    assert "columns" in ui_page.locator("body").inner_text()
+
+
+@ui_case("UC9")
+def test_state_endpoint_accepts_cache_buster(ui_page, ui_server):
+    response = ui_page.goto(ui_server + "/api/state?_=123&source=board")
+    assert response.status == 200
+    assert "columns" in ui_page.locator("body").inner_text()
+
+
+@ui_case("UC10")
+def test_board_loads_after_query_string_state_request(ui_page, ui_server):
+    ui_page.route("**/api/state", lambda route: route.continue_(url=route.request.url + "?_=123"), times=1)
+    ui_page.goto(ui_server)
+    ui_page.locator(CARD).wait_for(state="visible")

@@ -1674,7 +1674,7 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._json(500, {"error": str(exc)})
             return
-        if self.path == "/api/state":
+        if path == "/api/state":
             try:
                 data = collect_state(self.root)
                 payload = json.dumps(data).encode("utf-8")
