@@ -338,6 +338,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .nav-btn[aria-current="page"] { color: var(--heading); background: #21262d; border-color: var(--border); }
     .nav-btn:focus-visible, .win-btn:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
     body.view-analytics #flight-deck, body.view-analytics .stats-bar, body.view-analytics #board-container { display: none; }
+    body.view-setup #flight-deck, body.view-setup .stats-bar, body.view-setup #board-container { display: none; }
+    #setup-view[hidden] { display: none; }
+    #setup-view { max-width: 900px; margin: 0 auto; }
+    #setup-view h2 { color: var(--heading); margin-bottom: 8px; }
+    #setup-view > p { color: #8b949e; margin-bottom: 20px; }
+    #setup-summary { margin-bottom: 16px; color: #8b949e; }
+    .setup-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); }
+    .setup-row strong { color: var(--heading); }
+    .setup-row p { color: #8b949e; font-size: 13px; }
+    .setup-row code { display: block; margin-top: 7px; color: #a5d6ff; font-size: 12px; overflow-wrap: anywhere; }
+    .setup-state { font-size: 12px; font-weight: 700; color: #f0b94d; }
+    .setup-state.ready { color: #3fb950; }
+    @media (max-width: 650px) { .setup-row { grid-template-columns: 1fr; gap: 5px; } }
     #analytics-view[hidden] { display: none; }
     .an-bar-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
     .win-group { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -384,6 +397,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <nav class="nav" aria-label="Views">
       <button type="button" class="nav-btn" data-view="board" aria-current="page">Board</button>
       <button type="button" class="nav-btn" data-view="analytics">Analytics</button>
+      <button type="button" class="nav-btn" data-view="setup">Setup</button>
     </nav>
     <div>
       <button class="refresh-btn" onclick="fetchState()">Refresh</button>
@@ -435,6 +449,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="board" id="board-container">
     <!-- Rendered via JavaScript -->
   </div>
+
+  <section id="setup-view" aria-label="Repository setup" hidden>
+    <h2>Set up this repository</h2>
+    <p>Follow each step in your terminal. Refresh after connecting a service. Credentials stay with GitHub, OpenClaw, and the coding CLIs.</p>
+    <div id="setup-summary" role="status"></div>
+    <div id="setup-steps"></div>
+    <button type="button" class="refresh-btn" id="setup-refresh">Recheck connections</button>
+  </section>
 
 
   <section id="analytics-view" aria-label="Workflow analytics" hidden>
@@ -803,7 +825,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function syncFromHash() {
       const m = location.hash.match(/^#ticket-(\d+)$/);
-      setView(location.hash === '#analytics' ? 'analytics' : 'board');
+      setView(location.hash === '#analytics' ? 'analytics' : location.hash === '#setup' ? 'setup' : 'board');
       if (m) openTicket(parseInt(m[1], 10), true);
       else closeDrawer(false);
     }
@@ -1163,19 +1185,48 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       if (an.view === view) return;
       an.view = view;
       document.body.classList.toggle('view-analytics', view === 'analytics');
+      document.body.classList.toggle('view-setup', view === 'setup');
       fdEl('analytics-view').hidden = view !== 'analytics';
+      fdEl('setup-view').hidden = view !== 'setup';
       document.querySelectorAll('.nav-btn').forEach(b => {
         if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
       });
       if (view === 'analytics') loadAnalytics();
+      if (view === 'setup') loadSetup();
     }
     document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', () => {
       if (b.dataset.view === 'analytics') { if (location.hash !== '#analytics') location.hash = 'analytics'; else setView('analytics'); }
+      else if (b.dataset.view === 'setup') { if (location.hash !== '#setup') location.hash = 'setup'; else setView('setup'); }
       else { history.replaceState(null, '', location.pathname + location.search); syncFromHash(); }
     }));
     document.querySelectorAll('#an-window .win-btn').forEach(b => b.addEventListener('click', () => setWindow(b.dataset.window)));
     fdEl('an-refresh').addEventListener('click', loadAnalytics);
+    async function loadSetup() {
+      const summary = fdEl('setup-summary'), list = fdEl('setup-steps');
+      summary.textContent = 'Checking local connections…';
+      try {
+        const res = await fetch('/api/setup', { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Setup check failed');
+        list.replaceChildren();
+        for (const item of data.steps) {
+          const row = document.createElement('div'); row.className = 'setup-row';
+          const state = document.createElement('span'); state.className = 'setup-state' + (item.ready ? ' ready' : '');
+          state.textContent = item.ready ? 'READY' : item.required ? 'ACTION NEEDED' : 'OPTIONAL';
+          const content = document.createElement('div');
+          const title = document.createElement('strong'); title.textContent = item.name;
+          const detail = document.createElement('p'); detail.textContent = item.detail;
+          const command = document.createElement('code'); command.textContent = item.command;
+          content.append(title, detail);
+          if (!item.ready) content.append(command);
+          row.append(state, content); list.append(row);
+        }
+        summary.textContent = data.ready ? data.repo + ' is ready for a dry run.' : data.steps.filter(s => s.required && s.ready).length + ' of ' + data.steps.filter(s => s.required).length + ' required checks ready for ' + data.repo + '.';
+      } catch (err) { summary.textContent = 'Setup check failed: ' + err.message; }
+    }
+    fdEl('setup-refresh').addEventListener('click', loadSetup);
     if (location.hash === '#analytics') setView('analytics');
+    if (location.hash === '#setup') setView('setup');
 
   </script>
 </body>
@@ -1613,6 +1664,13 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/live":
             try:
                 self._json(200, collect_live(self.root))
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": str(exc)})
+            return
+        if path == "/api/setup":
+            from .onboarding import collect_setup
+            try:
+                self._json(200, collect_setup(self.root), strict=True)
             except Exception as exc:  # noqa: BLE001
                 self._json(500, {"error": str(exc)})
             return
