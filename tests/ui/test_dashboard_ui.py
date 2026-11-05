@@ -61,3 +61,28 @@ def test_narrow_viewport_drawer_fills_the_screen(ui_page, ui_server):
     ui_page.locator(OPEN).wait_for()
     width = ui_page.evaluate("document.getElementById('drawer').getBoundingClientRect().width")
     assert width == 375
+
+
+@ui_case("UC6")
+def test_analytics_view_reads_local_metrics(ui_page, ui_server):
+    ui_page.goto(ui_server + "/#analytics")
+    ui_page.locator("#analytics-view").wait_for(state="visible")
+    ui_page.locator('[data-view="analytics"]').wait_for(state="visible")
+    assert ui_page.locator('[data-view="analytics"]').get_attribute("aria-current") == "page"
+    ui_page.locator("#stage-panel").wait_for(state="visible")
+
+
+@ui_case("UC7")
+def test_setup_view_rechecks_readiness(ui_page, ui_server, monkeypatch):
+    from devflow import onboarding
+
+    monkeypatch.setattr(onboarding, "collect_setup", lambda root: {
+        "repo": "sample", "ready": False,
+        "steps": [{"name": "GitHub", "ready": False, "required": True,
+                   "detail": "Authenticate gh", "command": "gh auth login"}],
+    })
+    ui_page.goto(ui_server + "/#setup")
+    ui_page.locator("#setup-view").wait_for(state="visible")
+    ui_page.get_by_text("gh auth login").wait_for(state="visible")
+    ui_page.locator("#setup-refresh").click()
+    ui_page.get_by_text("0 of 1 required checks ready for sample.").wait_for(state="visible")

@@ -99,6 +99,8 @@ once with the use-case matrix, the acceptance criteria and a bounded digest of t
 has no browser. It can add blocking findings; it cannot override the lane. A `pass` for a use case
 with no passing case in the report becomes `missing`.
 
-Existing repositories must run `devflow init --force` to pick up the new `ui_evaluator` prompt and
-schema, and the updated planner and coder prompts. The `ui_evaluator` role is routed like
-`reviewer` when your `[routing] roles` does not list it.
+Existing repositories should run `devflow init` to add missing `ui_evaluator` prompt and schema
+without overwriting local edits. Review the shipped planner and coder templates and merge their
+UI-use-case instructions into any existing repo-local copies. `devflow init --force` overwrites
+repo-local prompts and configuration, so use it only after reviewing or backing up those edits.
+The `ui_evaluator` role is routed like `reviewer` when your `[routing] roles` does not list it.
