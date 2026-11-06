@@ -82,6 +82,25 @@ def test_ticket_budget_limits_parse_and_default_off(tmp_path):
     assert limits.max_ticket_cost_usd == 7.5 and limits.max_ticket_tokens == 2_000_000
 
 
+def test_agent_capabilities_parse_and_validate(tmp_path):
+    import pytest
+
+    from devflow.loadconfig import ConfigError, load_config
+    (tmp_path / ".devflow").mkdir(exist_ok=True)
+    cfg = tmp_path / ".devflow/config.toml"
+    base = '[repo]\nname = "x"\n[routing.agents.codex]\npriority = 2\n'
+    cfg.write_text(base)
+    assert load_config(tmp_path).routing.agents["codex"].capabilities is None
+    cfg.write_text(base + 'capabilities = ["sockets"]\n')
+    assert load_config(tmp_path).routing.agents["codex"].capabilities == ("sockets",)
+    cfg.write_text(base + 'capabilities = ["teleport"]\n')
+    with pytest.raises(ConfigError, match="unknown capabilities"):
+        load_config(tmp_path)
+    cfg.write_text(base + 'capabilities = "sockets"\n')
+    with pytest.raises(ConfigError, match="list of strings"):
+        load_config(tmp_path)
+
+
 # ---------------------------------------------------------------- [ui]
 
 

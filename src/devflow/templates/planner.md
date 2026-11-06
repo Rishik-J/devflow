@@ -30,5 +30,10 @@ $gates_summary
    browser scenarios tagged with these ids using `ui_case`. Plans that do not touch
    user-facing files need none.
 
+## Capabilities
+If verifying the change needs to bind a local socket or port (a test server), run a browser, or
+reach the network, list those in `requires` (`sockets`, `browser`, `network`). Some coding agents
+run in a sandbox without them, and devflow routes the work to one that has them.
+
 ## Output
 JSON only, matching `.devflow/schemas/plan.schema.json`.

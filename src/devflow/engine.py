@@ -47,7 +47,7 @@ from .learn.capture import capture
 from .learn.ledger import Ledger, LessonRejected, parse_learn, render_for_prompt
 from .loadconfig import Config
 from .notify import Notifier, NullNotifier
-from .router import NoAgentAvailable, Router, run_routed
+from .router import CapabilityUnavailable, NoAgentAvailable, Router, run_routed
 from .states import TERMINAL, LimitExceeded, State, Ticket
 from .store import Store
 
@@ -155,7 +155,7 @@ class Engine:
                 return Outcome(ticket, "paused", str(wait))
             except NoAgentAvailable as exc:
                 return Outcome(ticket, "paused", str(exc))
-            except (_Escalate, LimitExceeded) as exc:
+            except (_Escalate, LimitExceeded, CapabilityUnavailable) as exc:
                 self._escalate(ticket, str(exc))
                 return Outcome(ticket, "escalated", str(exc))
             except (AgentError, HostError, gitops.GitError, worktree.WorktreeError,
@@ -342,7 +342,7 @@ class Engine:
     def _request(
         self, ticket: Ticket, role: str, prompt: str, *, schema: str | None, read_only: bool,
         cwd: Path | None = None, files: list[str] | None = None, session: str | None = None,
-        slice_text: str | None = None,
+        slice_text: str | None = None, requires: tuple[str, ...] = (),
     ) -> AgentRequest:
         wt = cwd or self._wt(ticket)
         if role == "planner":
@@ -364,6 +364,7 @@ class Engine:
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,
             mcp=graphctx.mcp_config(wt), mcp_overrides=graphctx.codex_overrides(wt),
             max_budget_usd=self._remaining_budget_usd(ticket),
+            requires=requires,
         )
 
     def _ticket_slice(self, wt: Path, text: str) -> str:
@@ -444,6 +445,23 @@ class Engine:
         result = run_structured(agent, req, self.cfg.root) if req.schema else agent.run(req)
         self._record_direct(agent, role, req, result)
         return result
+
+    # Files that cannot be verified inside a sandbox without sockets or a browser. A heuristic;
+    # the planner's own `requires` field and a runtime sandbox denial add to it.
+    NEEDS_BY_PATH = (
+        ("sockets", ("*server*", "*socket*", "*test_ui*", "tests/ui/*", "*e2e*")),
+        ("browser", ("*playwright*", "*selenium*", "tests/ui/*", "*e2e*", "*browser*")),
+    )
+
+    def _requirements(self, ticket: Ticket, plan: dict | None) -> tuple[str, ...]:
+        import fnmatch
+        needed = {r for r in (plan or {}).get("requires", [])}
+        needed |= {r for r in ticket.sessions.get("needs", "").split(",") if r}
+        files = [f.lower() for f in self._plan_files(plan)]
+        for capability, patterns in self.NEEDS_BY_PATH:
+            if any(fnmatch.fnmatch(f, p) for f in files for p in patterns):
+                needed.add(capability)
+        return tuple(sorted(needed))
 
     def _plan_files(self, plan: dict | None) -> list[str]:
         return sorted({f for s in (plan or {}).get("steps", []) for f in s.get("files", [])})
@@ -620,7 +638,8 @@ class Engine:
             t, "coder",
             prompts.coder_task(plan, self._latest(t, "test_plan") or {}, feedback,
                                resuming=bool(session), diff_stat=stat),
-            schema=None, read_only=False, files=self._plan_files(plan), session=session)
+            schema=None, read_only=False, files=self._plan_files(plan), session=session,
+            requires=self._requirements(t, plan))
         routed = run_routed(self.router, req, t.id, prefer=prefer)
         t.sessions["coder"] = routed.result.session or ""
         t.sessions["coder_agent"] = routed.agent
@@ -633,6 +652,15 @@ class Engine:
         self._put(t, "implement", {"agent": routed.agent, "switched": routed.switched,
                                    "committed": sha, "summary": routed.result.text[-1500:]})
         if sha is None and failures.classify(routed.result.text) == failures.SANDBOX:
+            needs = {n for n in t.sessions.get("needs", "").split(",") if n}
+            if "sockets" not in needs and self.router.capable_agents({"sockets"}):
+                # This agent's sandbox blocked the work; try one that has sockets before giving up.
+                t.sessions["needs"] = ",".join(sorted(needs | {"sockets"}))
+                t.sessions.pop("coder", None)
+                self.store.save_ticket(t)
+                self.store.add_event(t.id, "capability_retry", {"agent": routed.agent,
+                                                                "needs": t.sessions["needs"]})
+                return
             raise _Escalate(f"the coder ({routed.agent}) made no changes and reported that its "
                             "sandbox blocked the work. Retrying the same agent cannot fix that; "
                             "use an agent with the needed capability or run it by hand: "

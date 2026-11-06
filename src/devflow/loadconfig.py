@@ -35,6 +35,7 @@ class AgentBudget:
     limit_usd: float = 0.0
     usd_per_mtok_in: float = 3.0
     usd_per_mtok_out: float = 15.0
+    capabilities: tuple[str, ...] | None = None  # None = the driver default (see router)
 
 
 @dataclass
@@ -137,6 +138,21 @@ def _str_list(section: dict, key: str) -> list[str]:
     return list(value)
 
 
+CAPABILITIES = ("sockets", "browser", "network")
+
+
+def _capabilities(entry: dict, where: str) -> tuple[str, ...] | None:
+    if "capabilities" not in entry:
+        return None
+    value = entry["capabilities"]
+    if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+        raise ConfigError(f"{where} capabilities must be a list of strings")
+    unknown = sorted(set(value) - set(CAPABILITIES))
+    if unknown:
+        raise ConfigError(f"{where} unknown capabilities {unknown}; choose from {list(CAPABILITIES)}")
+    return tuple(value)
+
+
 def _routing(data: dict) -> RoutingCfg:
     section = data.get("routing", {})
     strategy = section.get("strategy", "headroom")
@@ -154,6 +170,7 @@ def _routing(data: dict) -> RoutingCfg:
             limit_usd=_number(entry, "limit_usd", 0.0, where),
             usd_per_mtok_in=_number(entry, "usd_per_mtok_in", 3.0, where),
             usd_per_mtok_out=_number(entry, "usd_per_mtok_out", 15.0, where),
+            capabilities=_capabilities(entry, where),
         )
     return RoutingCfg(
         roles=tuple(roles),

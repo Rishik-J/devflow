@@ -83,3 +83,12 @@ def test_empty_summary_is_rejected():
     bad = {"verdict": "approve", "integration": {"ran": False, "passed": False},
            "findings": [{"id": "1", "severity": "nit", "blocking": False, "file": "a", "summary": ""}]}
     assert schema.errors("review", bad)
+
+
+def test_plan_requires_is_optional_and_restricted_to_known_capabilities():
+    from devflow import schema
+    ready = {"status": "ready", "goal": "g", "acceptance_criteria": [{"id": "AC1", "text": "t"}],
+             "steps": [{"id": "S1", "description": "d", "files": ["a.py"]}]}
+    assert schema.errors("plan", ready) == []
+    assert schema.errors("plan", {**ready, "requires": ["sockets", "browser"]}) == []
+    assert schema.errors("plan", {**ready, "requires": ["teleport"]})

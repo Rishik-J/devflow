@@ -23,7 +23,7 @@ from pathlib import Path
 from . import telemetry
 from .agents import Agent, AgentError, AgentRequest, AgentResult, check_ready, make_agent
 from .agents.base import _with, run_structured
-from .loadconfig import AgentBudget, Config, RoutingCfg
+from .loadconfig import CAPABILITIES, AgentBudget, Config, RoutingCfg
 from .store import Store
 
 LIMIT_PATTERN = re.compile(
@@ -32,6 +32,16 @@ LIMIT_PATTERN = re.compile(
     r"hit your [\w -]{0,20}limit",
     re.IGNORECASE,
 )
+
+
+# Agents whose sandbox is known to block sockets, browsers and network. Anything else is assumed
+# unrestricted unless [routing.agents.<name>] capabilities says otherwise.
+RESTRICTED_AGENTS = {"codex", "cursor"}
+ALL_CAPABILITIES = frozenset(CAPABILITIES)
+
+
+class CapabilityUnavailable(RuntimeError):
+    """No configured agent has the capabilities the task needs; waiting will not help."""
 
 
 class NoAgentAvailable(RuntimeError):
@@ -127,6 +137,7 @@ class Router:
         avoid: Iterable[str] = (),
         prefer: str | None = None,
         exclude: Iterable[str] = (),
+        require: Iterable[str] = (),
     ) -> Choice:
         """Choose an agent for `role`.
 
@@ -137,10 +148,22 @@ class Router:
         if not self.routes(role):
             raise ValueError(f"role {role!r} is not routed (routing.roles = {self.cfg.roles})")
         excluded, avoided = set(exclude), set(avoid)
-        statuses = [s for s in self.statuses() if s.name not in excluded]
+        needed = frozenset(require)
+        everyone = self.statuses()
+        if needed:
+            # "Nobody could ever do this" (a config problem, escalate) is decided over ALL agents.
+            # Capable agents that were merely tried and limited, or are cooling down, mean wait.
+            everyone = [s for s in everyone if needed <= self.capabilities(s.name)] or None
+            if everyone is None:
+                raise CapabilityUnavailable(
+                    f"no agent can provide {sorted(needed)}; "
+                    + ", ".join(f"{s.name}={sorted(self.capabilities(s.name)) or 'none'}"
+                                for s in self.statuses())
+                    + ". Give an agent [routing.agents.<name>] capabilities or run it by hand.")
+        statuses = [s for s in everyone if s.name not in excluded]
         eligible = [s for s in statuses if s.eligible]
         if not eligible:
-            raise NoAgentAvailable(self._explain(statuses), self._retry_at(statuses))
+            raise NoAgentAvailable(self._explain(everyone), self._retry_at(everyone))
 
         independent = True
         pool = [s for s in eligible if s.name not in avoided]
@@ -158,6 +181,18 @@ class Router:
             why = (f"{chosen.headroom:.0%} headroom" if chosen.limit_usd > 0
                    else f"priority {chosen.priority}, no local cap")
         return Choice(chosen.name, self.agents[chosen.name], independent, why)
+
+    def capabilities(self, name: str) -> frozenset[str]:
+        configured = self.cfg.agents.get(name)
+        if configured is not None and configured.capabilities is not None:
+            return frozenset(configured.capabilities)
+        return frozenset() if name.split(":")[0] in RESTRICTED_AGENTS else ALL_CAPABILITIES
+
+    def capable_agents(self, require: Iterable[str]) -> list[str]:
+        """Names of ready agents that could run a task needing `require`."""
+        needed = frozenset(require)
+        return [s.name for s in self.statuses()
+                if s.eligible and needed <= self.capabilities(s.name)]
 
     def _retry_at(self, statuses: list[AgentStatus]) -> float | None:
         times = [s.cooldown_until for s in statuses if s.cooldown_until and s.ready]
@@ -232,7 +267,8 @@ def run_routed(
     tried: list[str] = []
     prompt_chars = len(req.prompt) + len(req.system)
     for _ in range(len(router.agents)):
-        choice = router.pick(req.role, avoid=avoid, prefer=prefer, exclude=tried)
+        choice = router.pick(req.role, avoid=avoid, prefer=prefer, exclude=tried,
+                             require=req.requires)
         telemetry.content_event("routing.selected", input={"preferred": prefer, "already_tried": tried},
                                 output={"selected": choice.name, "reason": getattr(choice, "reason", "router priority and available headroom")},
                                 attributes={"devflow.agent": choice.name, "devflow.role": req.role,

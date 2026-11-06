@@ -52,6 +52,11 @@
       }
     },
     "risks": { "type": "array", "items": { "type": "string" } },
+    "requires": {
+      "type": "array",
+      "description": "Capabilities needed to verify this change: bind local sockets, run a browser, or reach the network. Leave empty if none.",
+      "items": { "enum": ["sockets", "browser", "network"] }
+    },
     "ui_use_cases": {
       "type": "array",
       "items": {
