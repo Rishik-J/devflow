@@ -30,6 +30,8 @@ def test_html_template_has_vital_elements():
     assert "Devflow Dashboard" in HTML_TEMPLATE
     assert "/api/state" in HTML_TEMPLATE
     assert "board-container" in HTML_TEMPLATE
+    assert "setup-view" in HTML_TEMPLATE
+    assert "/api/setup" in HTML_TEMPLATE
 
 
 def test_collect_state(tmp_path: Path):
@@ -72,6 +74,11 @@ def test_ui_server_and_e2e_browser():
             data = json.loads(resp.read().decode("utf-8"))
             assert "columns" in data
             assert "repo" in data
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/setup") as resp:
+            assert resp.status == 200
+            setup = json.loads(resp.read().decode("utf-8"))
+            assert "steps" in setup and "ready" in setup
 
         # 3. Test 404 for unknown endpoints
         try:
@@ -340,6 +347,7 @@ def test_ticket_endpoint_live(tmp_path: Path):
             assert code == 400 and "error" in body
         assert get(port, "/api/ticket/")[0] == 404
         assert get(port, "/api/state")[0] == 200
+        assert get(port, "/api/state?source=board")[0] == 200
     finally:
         server.shutdown()
         server.server_close()

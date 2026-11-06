@@ -48,6 +48,13 @@ These tests call authenticated coding-agent CLIs and incur usage. They are skipp
 Avoid posting credentials, full environment dumps, private ticket contents or provider tokens
 in bug reports. Include redacted diagnostics and the tool versions needed to reproduce a failure.
 
+## UI lane tests
+
+Browser scenarios live in `tests/ui/` and are skipped by default because they need Playwright and
+Chromium. Run them with `DEVFLOW_UI_LANE=1 python -m pytest tests/ui -p devflow.uirunner`. See
+[docs/ui-lane.md](docs/ui-lane.md). Repositories that already ran `devflow init` need
+`devflow init --force` to pick up the new prompts and schemas.
+
 ## Pull requests
 
 Explain the problem and resulting behavior, then list the checks you ran. Call out any change
