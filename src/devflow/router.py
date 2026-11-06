@@ -28,7 +28,8 @@ from .store import Store
 
 LIMIT_PATTERN = re.compile(
     r"rate.?limit|usage.?limit|quota|credit|too many requests|\b429\b|overloaded|"
-    r"limit (?:reached|exceeded)|out of (?:usage|credits)|insufficient",
+    r"limit (?:reached|exceeded)|out of (?:usage|credits)|insufficient|"
+    r"hit your [\w -]{0,20}limit",
     re.IGNORECASE,
 )
 

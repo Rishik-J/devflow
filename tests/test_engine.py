@@ -1333,3 +1333,91 @@ def test_failing_gates_persist_failures_and_bounded_output(env: Env, monkeypatch
     failed = [r for r in p["results"] if not r["ok"]]
     assert failed and failed[0]["exit_code"] != 0
     assert all(len(r["output_tail"]) <= 2000 for r in p["results"])
+
+
+# ---------------------------------------------------------------- per-ticket budget and sandbox
+
+
+def test_ticket_budget_escalates_before_more_money_is_spent(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    engine = env.engine()
+    engine.cfg.limits.max_ticket_cost_usd = 1.0
+    env.store.record_usage("codex", "coder", "#1", cost_usd=5.0, tokens_in=10, tokens_out=1)
+    out = engine.run(1)
+    assert out.status == "escalated" and "ticket budget exceeded" in out.reason
+    assert "$5.00 spent, cap $1.00" in out.reason
+    assert env.coder_agent.calls == []  # stopped before the coder ran
+
+
+def test_ticket_token_budget_counts_input_and_output(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    engine = env.engine()
+    engine.cfg.limits.max_ticket_tokens = 1000
+    env.store.record_usage("codex", "coder", "#1", cost_usd=0.0, tokens_in=900, tokens_out=200)
+    assert "tokens used, cap 1,000" in engine.run(1).reason
+
+
+def test_resume_resets_the_budget_window(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    engine = env.engine()
+    engine.cfg.limits.max_ticket_cost_usd = 1.0
+    env.store.record_usage("codex", "coder", "#1", cost_usd=5.0)
+    assert engine.run(1).status == "escalated"
+    env.say("alice", "/resume")
+    resumed = env.engine()
+    resumed.cfg.limits.max_ticket_cost_usd = 1.0
+    out = resumed.run(1)
+    assert out.status != "escalated"  # the earlier $5 no longer counts against the new window
+    assert out.ticket.state is not State.ESCALATED
+    assert out.ticket.sessions["budget_base"].startswith("5.0:")
+
+
+def test_budget_off_by_default_never_escalates(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    env.store.record_usage("codex", "coder", "#1", cost_usd=999.0, tokens_in=10**9)
+    assert env.engine().run(1).ticket.state is State.AWAITING_MERGE_APPROVAL
+
+
+def test_remaining_budget_is_passed_to_agents(env: Env):
+    engine = env.engine()
+    engine.cfg.limits.max_ticket_cost_usd = 3.0
+    env.store.record_usage("claude", "coder", "#1", cost_usd=1.0)
+    from devflow.states import Ticket
+    ticket = engine.store.get_ticket("#1") or Ticket(id="#1", issue=1)
+    assert engine._remaining_budget_usd(ticket) == 2.0
+    engine.cfg.limits.max_ticket_cost_usd = 0.0
+    assert engine._remaining_budget_usd(ticket) is None
+
+
+def test_a_sandbox_blocked_coder_escalates_at_once_not_after_retries(env: Env):
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    coder = FakeAgent({"coder": ["All failures were sandbox-denied socket binds; nothing changed."]},
+                      name="codex")
+    out = env.engine(coder=lambda req: "All failures were sandbox-denied socket binds.").run(1)
+    assert out.status == "escalated" and "sandbox blocked the work" in out.reason
+    assert out.ticket.implement_attempts == 0
+    assert coder is not None
+
+
+def test_a_sandbox_error_from_the_agent_escalates_without_a_retry(env: Env):
+    def blocked(req):
+        raise AgentError("codex coder failed: operation not permitted binding socket")
+
+    env.engine().run(1)
+    env.say("alice", "/approve")
+    out = env.engine(coder=blocked).run(1)
+    assert out.status == "escalated" and "looks like a sandbox denial" in out.reason
+
+
+def test_openclaw_usage_is_recorded_for_budgeting(env: Env):
+    planner = FakeAgent({"planner": [PLAN]}, name="openclaw:devflow")
+    env.engine(planner=planner).run(1)
+    rows = env.store._db.execute(
+        "SELECT agent, role, tokens_in FROM agent_usage WHERE ticket_id='#1'").fetchall()
+    assert any(r["agent"] == "openclaw:devflow" and r["role"] == "planner" and r["tokens_in"] > 0
+               for r in rows)

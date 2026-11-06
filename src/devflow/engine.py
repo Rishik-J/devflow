@@ -26,6 +26,7 @@ from . import (
     baseline,
     commands,
     diffguard,
+    failures,
     followups,
     gitops,
     graphctx,
@@ -99,6 +100,7 @@ class Engine:
             graph_builder, dry_run, log, max_steps)
         self.board = board
         self.checkpoint: Callable[[], str] = lambda: ""
+        self._ticket_id = ""
         self._handlers: dict[State, Callable[[Ticket], None]] = {
             State.NEW: self._new,
             State.REFINING: self._refining,
@@ -124,6 +126,7 @@ class Engine:
         else:
             self._apply_learn_commands(ticket)
         telemetry.trace_metadata(base_sha=ticket.base_sha or None, remote=self.cfg.remote)
+        self._ticket_id = ticket.id
         for _ in range(self.max_steps):
             stop = self.checkpoint()
             if stop:
@@ -142,6 +145,7 @@ class Engine:
                         stage.content(input={"issue": issue, "state": ticket.state.value,
                                              "implementation_attempt": ticket.implement_attempts,
                                              "review_round": ticket.review_round})
+                        self._check_budget(ticket)
                         self._handlers[ticket.state](ticket)
                         stage.content(output={"next_state": ticket.state.value})
                         stage.set(**{"devflow.next_state": ticket.state.value})
@@ -156,6 +160,13 @@ class Engine:
                 return Outcome(ticket, "escalated", str(exc))
             except (AgentError, HostError, gitops.GitError, worktree.WorktreeError,
                     prompts.PromptError) as exc:
+                if isinstance(exc, AgentError) and failures.classify(str(exc)) == failures.SANDBOX:
+                    # Retrying the same agent in the same sandbox cannot change the answer.
+                    reason = (f"{type(exc).__name__} in {before.value} looks like a sandbox "
+                              f"denial, so retrying would only spend money: {exc}")
+                    self.store.add_event(ticket.id, "error", {"state": before.value, "error": str(exc)})
+                    self._escalate(ticket, reason)
+                    return Outcome(ticket, "escalated", reason)
                 if self._record_error(ticket, exc) >= 2:
                     reason = f"{type(exc).__name__} twice in {before.value}: {exc}"
                     self._escalate(ticket, reason)
@@ -181,6 +192,51 @@ class Engine:
             info = stall.check_stall(stage, elapsed, history)
             if info:
                 telemetry.report_stall(info)
+
+    BUDGET_STATES = frozenset({State.NEW, State.REFINING, State.TEST_DESIGN, State.IMPLEMENTING,
+                               State.GATES, State.IN_REVIEW, State.CHANGES_REQUESTED})
+
+    def _spent(self, ticket: Ticket) -> tuple[float, int]:
+        """Cost and tokens recorded for this ticket since it started or was last resumed."""
+        totals = self.store.totals_for_ticket(ticket.id)
+        base_cost, _, base_tokens = ticket.sessions.get("budget_base", "0:0").partition(":")
+        try:
+            return (max(0.0, totals["cost_usd"] - float(base_cost)),
+                    max(0, int(totals["tokens"]) - int(base_tokens or 0)))
+        except ValueError:
+            return totals["cost_usd"], int(totals["tokens"])
+
+    def _check_budget(self, ticket: Ticket) -> None:
+        limits = self.cfg.limits
+        if ticket.state not in self.BUDGET_STATES or not (limits.max_ticket_cost_usd
+                                                          or limits.max_ticket_tokens):
+            return
+        cost, tokens = self._spent(ticket)
+        over = []
+        if limits.max_ticket_cost_usd and cost >= limits.max_ticket_cost_usd:
+            over.append(f"${cost:.2f} spent, cap ${limits.max_ticket_cost_usd:.2f}")
+        if limits.max_ticket_tokens and tokens >= limits.max_ticket_tokens:
+            over.append(f"{tokens:,} tokens used, cap {limits.max_ticket_tokens:,}")
+        if over:
+            raise _Escalate("ticket budget exceeded (" + "; ".join(over) + "). Raise "
+                            "[limits] max_ticket_cost_usd / max_ticket_tokens if this is expected, "
+                            "then comment /resume to continue.")
+
+    def _remaining_budget_usd(self, ticket: Ticket) -> float | None:
+        cap = self.cfg.limits.max_ticket_cost_usd
+        if not cap:
+            return None
+        return max(0.01, round(cap - self._spent(ticket)[0], 4))
+
+    def _record_direct(self, agent: Agent, role: str, req: AgentRequest, result: AgentResult) -> None:
+        """Record usage for agents that run outside the router (OpenClaw planner, reviewer ...)."""
+        if not self._ticket_id:
+            return
+        usage = (result.raw or {}).get("usage") or {}
+        tin = int(usage.get("input_tokens") or (len(req.prompt) + len(req.system)) / 4)
+        tout = int(usage.get("output_tokens") or len(result.text or "") / 4)
+        self.store.record_usage(agent.name, role, self._ticket_id, cost_usd=result.cost_usd or 0.0,
+                                tokens_in=tin, tokens_out=tout, ok=result.ok, error=result.error)
 
     def _record_error(self, ticket: Ticket, exc: Exception) -> int:
         self.store.add_event(ticket.id, "error", {"state": ticket.state.value, "error": str(exc)})
@@ -307,6 +363,7 @@ class Engine:
             role=role, prompt=prompt, cwd=wt, system=system, schema=schema, read_only=read_only,
             session=session, timeout_s=self.cfg.stage_timeout_minutes * 60,
             mcp=graphctx.mcp_config(wt), mcp_overrides=graphctx.codex_overrides(wt),
+            max_budget_usd=self._remaining_budget_usd(ticket),
         )
 
     def _ticket_slice(self, wt: Path, text: str) -> str:
@@ -384,7 +441,9 @@ class Engine:
         agent = self.agents.get(role)
         if agent is None:
             raise AgentError(f"no agent configured for role {role!r}")
-        return run_structured(agent, req, self.cfg.root) if req.schema else agent.run(req)
+        result = run_structured(agent, req, self.cfg.root) if req.schema else agent.run(req)
+        self._record_direct(agent, role, req, result)
+        return result
 
     def _plan_files(self, plan: dict | None) -> list[str]:
         return sorted({f for s in (plan or {}).get("steps", []) for f in s.get("files", [])})
@@ -504,7 +563,9 @@ class Engine:
                 "unit-only, or outside this ticket's verification.",
                 schema="plan_review", read_only=True,
             )
-            decision = run_structured(reviewer, req, self.cfg.root).data
+            plan_result = run_structured(reviewer, req, self.cfg.root)
+            self._record_direct(reviewer, "plan_reviewer", req, plan_result)
+            decision = plan_result.data
             self._put(t, "plan_review", decision)
             if decision["decision"] == "approve":
                 self._move(t, State.TEST_DESIGN, reviewer.name, "plan approved")
@@ -571,6 +632,11 @@ class Engine:
             raise _Escalate(str(exc)) from exc
         self._put(t, "implement", {"agent": routed.agent, "switched": routed.switched,
                                    "committed": sha, "summary": routed.result.text[-1500:]})
+        if sha is None and failures.classify(routed.result.text) == failures.SANDBOX:
+            raise _Escalate(f"the coder ({routed.agent}) made no changes and reported that its "
+                            "sandbox blocked the work. Retrying the same agent cannot fix that; "
+                            "use an agent with the needed capability or run it by hand: "
+                            + routed.result.text.strip()[-400:])
         if feedback and sha is None:
             # Re-running gates and review on identical code cannot change their answer. The
             # coder may disagree with the feedback; that is a call for a person.
@@ -861,6 +927,7 @@ class Engine:
             from .router import RoutedResult
             reviewer = self.agents["reviewer"]
             result = run_structured(reviewer, req, self.cfg.root)
+            self._record_direct(reviewer, "reviewer", req, result)
             return RoutedResult(result, reviewer.name, switched=False,
                                 independent=reviewer.name != t.sessions.get("coder_agent", ""))
         return run_routed(self.router, req, t.id, avoid={t.sessions.get("coder_agent", "")},
@@ -1075,6 +1142,8 @@ class Engine:
         t.review_round, t.implement_attempts = 0, 0
         t.sessions.pop("gate_fail_sig", None)
         t.sessions.pop("review_fail_sig", None)
+        totals = self.store.totals_for_ticket(t.id)
+        t.sessions["budget_base"] = f"{totals['cost_usd']}:{totals['tokens']}"
         self.store.save_ticket(t)
         back = State.IMPLEMENTING if self._latest(t, "test_plan") else State.REFINING
         self._move(t, back, f"human:{cmds[0].author}", "resumed")

@@ -240,6 +240,14 @@ class Store:
             " GROUP BY agent", (ticket_id,))
         return {r["agent"]: round(r["c"], 4) for r in rows}
 
+    def totals_for_ticket(self, ticket_id: str) -> dict[str, float]:
+        """Recorded spend for one ticket across all agents: cost, tokens and runs."""
+        row = self._db.execute(
+            "SELECT COALESCE(SUM(cost_usd),0) c, COALESCE(SUM(tokens_in),0) i,"
+            " COALESCE(SUM(tokens_out),0) o, COUNT(*) n FROM agent_usage WHERE ticket_id=?",
+            (ticket_id,)).fetchone()
+        return {"cost_usd": round(row["c"], 4), "tokens": int(row["i"] + row["o"]), "runs": row["n"]}
+
     def get_baseline(self, key: str) -> dict[str, Any] | None:
         row = self._db.execute("SELECT payload FROM baselines WHERE key=?", (key,)).fetchone()
         return json.loads(row["payload"]) if row else None

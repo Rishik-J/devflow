@@ -70,6 +70,18 @@ def test_bad_setup_type_is_rejected(py_repo: Path):
         load_config(py_repo)
 
 
+def test_ticket_budget_limits_parse_and_default_off(tmp_path):
+    from devflow.loadconfig import load_config
+    base = '[repo]\nname = "x"\n'
+    (tmp_path / ".devflow").mkdir()
+    (tmp_path / ".devflow/config.toml").write_text(base)
+    assert load_config(tmp_path).limits.max_ticket_cost_usd == 0
+    (tmp_path / ".devflow/config.toml").write_text(
+        base + "[limits]\nmax_ticket_cost_usd = 7.5\nmax_ticket_tokens = 2000000\n")
+    limits = load_config(tmp_path).limits
+    assert limits.max_ticket_cost_usd == 7.5 and limits.max_ticket_tokens == 2_000_000
+
+
 # ---------------------------------------------------------------- [ui]
 
 

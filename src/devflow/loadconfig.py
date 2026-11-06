@@ -267,6 +267,8 @@ def load_config(root: Path) -> Config:
         limits=Limits(
             max_review_rounds=_positive_int(limits, "max_review_rounds", 3),
             max_implement_attempts=_positive_int(limits, "max_implement_attempts", 3),
+            max_ticket_cost_usd=_number(limits, "max_ticket_cost_usd", 0.0, "[limits]"),
+            max_ticket_tokens=int(_number(limits, "max_ticket_tokens", 0, "[limits]")),
         ),
         stage_timeout_minutes=_positive_int(limits, "stage_timeout_minutes", 45),
         gate_timeout_minutes=_positive_int(limits, "gate_timeout_minutes", 20),

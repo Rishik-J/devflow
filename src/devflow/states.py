@@ -59,6 +59,8 @@ class LimitExceeded(RuntimeError):
 class Limits:
     max_review_rounds: int = 3
     max_implement_attempts: int = 3
+    max_ticket_cost_usd: float = 0.0  # 0 disables; counted from the last start or /resume
+    max_ticket_tokens: int = 0  # 0 disables; input + output tokens, same window
 
 
 @dataclass

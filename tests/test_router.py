@@ -347,3 +347,9 @@ def test_cursor_usage_is_normalised_for_the_router(tmp_path: Path):
                              budgets={"cursor": AgentBudget(usd_per_mtok_in=3, usd_per_mtok_out=15)})
     cost, tin, tout = router.estimate_cost("cursor", out, 0)
     assert (tin, tout) == (8222, 94) and cost == pytest.approx(8222 / 1e6 * 3 + 94 / 1e6 * 15)
+
+
+def test_the_real_five_hour_limit_message_is_a_limit_error():
+    # Seen live on #66: this was not recognised, so Claude was never put on cooldown.
+    from devflow.router import is_limit_error
+    assert is_limit_error("claude coder failed: success: You've hit your 5-hour limit · resets 6:30pm")
