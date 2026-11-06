@@ -410,3 +410,25 @@ def test_run_routed_carries_the_requirement(tmp_path):
     router = caps_router(tmp_path, codex=AgentBudget(priority=1))
     out = run_routed(router, req(tmp_path, requires=("browser",)), "#1")
     assert out.agent == "claude"
+
+
+def test_a_capable_agent_that_was_tried_and_limited_means_wait_not_a_capability_error(tmp_path):
+    # Found by the sandbox: run_routed excludes an agent that hit its limit, and the router used to
+    # then conclude that nobody had the capability and escalate instead of pausing.
+    from devflow.router import CapabilityUnavailable
+    router = caps_router(tmp_path)
+    with pytest.raises(NoAgentAvailable):
+        router.pick("coder", require={"sockets"}, exclude=["claude"])
+    router = caps_router(tmp_path, claude=AgentBudget(capabilities=()))
+    with pytest.raises(CapabilityUnavailable):  # nobody can ever do it: still a config problem
+        router.pick("coder", require={"sockets"}, exclude=["claude"])
+
+
+def test_run_routed_pauses_when_the_only_capable_agent_hits_its_limit(tmp_path):
+    agents = {"claude": FakeAgent({"coder": [AgentResult(text="", ok=False, error="usage limit reached")]},
+                                  name="claude"),
+              "codex": FakeAgent({"coder": ["would succeed but lacks sockets"]}, name="codex")}
+    router, _, _ = make_router(tmp_path, agents)
+    with pytest.raises(NoAgentAvailable):
+        run_routed(router, req(tmp_path, requires=("sockets",)), "#1")
+    assert agents["codex"].calls == []

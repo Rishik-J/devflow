@@ -149,19 +149,21 @@ class Router:
             raise ValueError(f"role {role!r} is not routed (routing.roles = {self.cfg.roles})")
         excluded, avoided = set(exclude), set(avoid)
         needed = frozenset(require)
-        statuses = [s for s in self.statuses() if s.name not in excluded]
+        everyone = self.statuses()
         if needed:
-            capable = [s for s in statuses if needed <= self.capabilities(s.name)]
-            if not capable:
+            # "Nobody could ever do this" (a config problem, escalate) is decided over ALL agents.
+            # Capable agents that were merely tried and limited, or are cooling down, mean wait.
+            everyone = [s for s in everyone if needed <= self.capabilities(s.name)] or None
+            if everyone is None:
                 raise CapabilityUnavailable(
                     f"no agent can provide {sorted(needed)}; "
                     + ", ".join(f"{s.name}={sorted(self.capabilities(s.name)) or 'none'}"
-                                for s in statuses)
+                                for s in self.statuses())
                     + ". Give an agent [routing.agents.<name>] capabilities or run it by hand.")
-            statuses = capable
+        statuses = [s for s in everyone if s.name not in excluded]
         eligible = [s for s in statuses if s.eligible]
         if not eligible:
-            raise NoAgentAvailable(self._explain(statuses), self._retry_at(statuses))
+            raise NoAgentAvailable(self._explain(everyone), self._retry_at(everyone))
 
         independent = True
         pool = [s for s in eligible if s.name not in avoided]
