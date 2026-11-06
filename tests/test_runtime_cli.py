@@ -197,3 +197,22 @@ def test_dry_run_cleanup_never_touches_other_branches(env: Env):
     eng.run(1)
     eng.cleanup_dry_run()
     assert "main" in git(env.repo, "branch", "--list")
+
+
+def test_doctor_runs_repository_checks_for_a_configured_repo(env, capsys, monkeypatch):
+    import argparse
+
+    from devflow import cli
+    monkeypatch.setattr(cli.shutil, "which", lambda tool: "/usr/bin/" + tool)
+    real_run = subprocess.run
+
+    def fake_run(cmd, *a, **k):  # only gh is faked; git must keep working for repo_root
+        if cmd and cmd[0] == "gh":
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    code = cli._doctor(argparse.Namespace(path=str(env.repo)))
+    out = capsys.readouterr().out
+    assert "repository checks" in out and "worktree disk" in out
+    assert code == 1  # gh is reported logged out by the fake runner

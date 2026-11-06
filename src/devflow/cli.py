@@ -34,7 +34,7 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _doctor(_: argparse.Namespace) -> int:
+def _doctor(args: argparse.Namespace) -> int:
     def has(tool: str) -> bool:
         return shutil.which(tool) is not None
 
@@ -64,7 +64,34 @@ def _doctor(_: argparse.Namespace) -> int:
     for name, ok, note in checks:
         print(f"  {'ok ' if ok else 'MISSING'}  {name:<20} {note}")
     coding = has("claude") or has("codex") or cursor_ready
-    return 0 if has("git") and gh_ok and coding else 1
+    config_ok = _doctor_repo(Path(getattr(args, "path", ".")).resolve())
+    return 0 if has("git") and gh_ok and coding and config_ok else 1
+
+
+def _doctor_repo(path: Path) -> bool:
+    """Checks that need this repository's config: rate limits, agent cooldowns, disk, STOP."""
+    from . import preflight
+    from .detect import repo_root
+    from .loadconfig import ConfigError, load_config
+    from .router import build_router
+    from .store import Store, state_db_path
+
+    root = repo_root(path)
+    if root is None or not (root / ".devflow" / "config.toml").exists():
+        return True
+    print(f"\n  repository checks ({root.name})")
+    try:
+        cfg = load_config(root)
+    except ConfigError as exc:
+        print(f"  FAILED  config: {exc}")
+        return False
+    with Store(state_db_path(root)) as store:
+        checks = preflight.run_checks(cfg, build_router(cfg, store), root)
+    for check in checks:
+        mark = "ok " if check.ok else ("FAILED" if check.blocking else "warn  ")
+        detail = check.message + (f"  -> {check.fix}" if check.fix and not check.ok else "")
+        print(f"  {mark}  {check.name:<22} {detail}".rstrip())
+    return not preflight.blocking_failures(checks)
 
 
 def _agents(args: argparse.Namespace) -> int:
@@ -309,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     p_init.set_defaults(func=_init)
 
     p_doc = sub.add_parser("doctor", help="check required tools")
+    p_doc.add_argument("path", nargs="?", default=".")
     p_doc.set_defaults(func=_doctor)
 
     p_ticket = sub.add_parser("ticket", help="work one GitHub issue until it needs you or is done")

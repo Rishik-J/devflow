@@ -1486,3 +1486,71 @@ def test_sandbox_blocked_with_no_capable_agent_escalates(env: Env):
     env.say("alice", "/approve")
     out = engine.run(1)
     assert out.status == "escalated" and "sandbox blocked the work" in out.reason
+
+
+# ---------------------------------------------------------------- preflight and infra pauses
+
+OPENCLAW_DOWN = "openclaw:devflow planner failed: status=None: [openclaw] The CLI command failed.\n" \
+                "[openclaw] For help, run `openclaw doctor`."
+
+
+def test_failing_preflight_pauses_before_any_agent_runs(env: Env):
+    from devflow.preflight import Check
+    engine = env.engine()
+    engine.preflight = lambda: [Check("gh authenticated", False, "gh is not logged in", fix="gh auth login")]
+    out = engine.run(1)
+    assert out.status == "paused" and "preflight failed: gh authenticated" in out.reason
+    assert env.planner.calls == [] and out.ticket.state is State.NEW
+
+
+def test_preflight_passes_then_proceeds_and_is_cached(env: Env):
+    from devflow.preflight import Check
+    calls = []
+    engine = env.engine()
+    engine.preflight = lambda: calls.append(1) or [Check("ok", True)]
+    assert engine.run(1).ticket.state is State.AWAITING_PLAN_APPROVAL
+    assert len(calls) == 1
+
+
+def test_a_non_blocking_preflight_failure_does_not_stop_the_ticket(env: Env):
+    from devflow.preflight import Check
+    engine = env.engine()
+    engine.preflight = lambda: [Check("agent codex", False, "cooling down", blocking=False)]
+    assert engine.run(1).ticket.state is State.AWAITING_PLAN_APPROVAL
+
+
+def test_openclaw_outage_pauses_instead_of_escalating_like_63_and_64(env: Env):
+    flaky = FakeAgent({"planner": [AgentError(OPENCLAW_DOWN)] * 3 + [PLAN]})
+    for n in (1, 2, 3):
+        out = env.engine(planner=flaky).run(1)
+        assert out.status == "paused" and f"({n}/8)" in out.reason
+    assert "infra problem" in env.notifier.sent[0] or "infrastructure problem" in env.notifier.sent[0]
+    assert len(env.notifier.sent) == 1  # one notification, not one per poll
+    recovered = env.engine(planner=flaky).run(1)
+    assert recovered.ticket.state is State.AWAITING_PLAN_APPROVAL
+
+
+def test_a_persistent_outage_eventually_escalates(env: Env):
+    flaky = FakeAgent({"planner": [AgentError(OPENCLAW_DOWN)] * 20})
+    out = None
+    for _ in range(8):
+        out = env.engine(planner=flaky).run(1)
+    assert out.status == "escalated" and "infrastructure kept failing" in out.reason
+
+
+def test_a_github_rate_limit_error_pauses(env: Env):
+    from devflow.host import HostError
+
+    class Limited(type(env.host)):
+        def get_issue(self, number):
+            raise HostError("gh issue view: GraphQL: API rate limit exceeded for user ID 1")
+
+    host = Limited()
+    out = env.engine(host=host).run(1)
+    assert out.status == "paused" and "infrastructure problem" in out.reason
+
+
+def test_an_ordinary_agent_failure_still_escalates_after_two(env: Env):
+    bad = FakeAgent({"planner": [AgentError("schema mismatch"), AgentError("schema mismatch")]})
+    env.engine(planner=bad).run(1)
+    assert env.engine(planner=bad).run(1).status == "escalated"

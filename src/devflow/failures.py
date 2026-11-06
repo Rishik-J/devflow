@@ -17,7 +17,7 @@ SANDBOX_PATTERN = re.compile(
 )
 INFRA_PATTERN = re.compile(
     r"openclaw\] the cli command failed|openclaw doctor|connection (?:refused|reset)|"
-    r"timed? ?out|temporarily unavailable|could not resolve host|graphql: api rate limit|"
+    r"temporarily unavailable|could not resolve host|graphql: api rate limit|"
     r"\b50[234]\b|bad gateway|service unavailable",
     re.IGNORECASE,
 )
