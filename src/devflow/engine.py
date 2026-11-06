@@ -33,6 +33,7 @@ from . import (
     prompts,
     stall,
     telemetry,
+    uilane,
     worktree,
 )
 from .agents import Agent, AgentError, AgentRequest, AgentResult, run_structured
@@ -479,7 +480,8 @@ class Engine:
         req = self._request(t, "planner",
                             prompts.planner_task(
                                 issue, answers, feedback, previous.get("questions"),
-                                {project.path: project.gates for project in self.cfg.projects}),
+                                {project.path: project.gates for project in self.cfg.projects},
+                                ui_lane=self.cfg.ui.enabled),
                             schema="plan", read_only=True,
                             slice_text=f"{issue.title}\n\n{issue.body}")
         plan = self._plain("planner", req).data
@@ -496,6 +498,15 @@ class Engine:
             self.notifier.send(f"#{t.issue} ({t.title}): devflow has {len(lines)} question(s).")
             self._move(t, State.AWAITING_CLARIFICATION, "planner", f"{len(lines)} question(s)")
             return
+        problems = uilane.validate_use_cases(plan, self.cfg)
+        if problems:
+            # Same mechanism as a failed test design: the plan is not accepted, the planner
+            # gets the reasons, and MAX_PLAN_CYCLES bounds the loop.
+            self._put(t, "plan_feedback", {"text": "The plan touches user-facing files, so it "
+                                           "needs well-formed `ui_use_cases`: "
+                                           + "; ".join(problems) + "."})
+            self.log(f"{t.id}: plan rejected, ui use cases: {'; '.join(problems)}")
+            return
         self._say(t, self._format_plan(plan))
         if self._gate_on("plan_approval"):
             self.notifier.send(f"#{t.issue} ({t.title}): plan ready for your approval.")
@@ -507,8 +518,12 @@ class Engine:
         steps = "\n".join(f"{i}. {s['description']}  `{', '.join(s['files']) or 'no files'}`"
                           for i, s in enumerate(plan["steps"], 1))
         risks = "\n".join(f"- {r}" for r in plan.get("risks", []))
+        cases = "\n".join(f"- **{u.get('id')}** ({u.get('kind')}) {u.get('title') or ''}: "
+                          f"{u.get('description')}  _covers {', '.join(u.get('criterion_ids', []))}_"
+                          for u in plan.get("ui_use_cases", []) if isinstance(u, dict))
         return (f"**Proposed plan**\n\n**Goal:** {plan['goal']}\n\n**Acceptance criteria**\n{ac}\n\n"
-                f"**Steps**\n{steps}\n" + (f"\n**Risks**\n{risks}\n" if risks else "")
+                f"**Steps**\n{steps}\n" + (f"\n**UI use cases**\n{cases}\n" if cases else "")
+                + (f"\n**Risks**\n{risks}\n" if risks else "")
                 + "\nComment `/approve` to proceed, or `/reject <what to change>`.")
 
     # ------------------------------------------------------------------ human gates
@@ -638,7 +653,7 @@ class Engine:
             return graphctx.impact(path, gitops.diff_names(path, base_sha))
         return None
 
-    def _verify(self, path: Path, base_sha: str, impact=None
+    def _verify(self, path: Path, base_sha: str, impact=None, plan: dict | None = None
                 ) -> tuple[baseline.Verdict, list[diffguard.Finding], GateReport]:
         """Gate results against the base, plus the diff guard, in `path`."""
         setup = setup_worktree(self.cfg, path)
@@ -657,7 +672,36 @@ class Engine:
                     return not baseline.evaluate(GateReport([result]), base).ok
         report = run_gates(self.cfg, path, impacted_tests=tests or None, priority_check=check)
         verdict = baseline.evaluate(report, base)
+        self._ui_lane(path, base_sha, plan, report, verdict)
         return verdict, diffguard.analyze(path, base_sha), report
+
+    def _ui_lane(self, path: Path, base_sha: str, plan: dict | None, report: GateReport,
+                 verdict: baseline.Verdict) -> None:
+        """Run the browser lane when `[ui]` is on and the diff touches user-facing files.
+
+        Strict and never compared with the base: a console error on the base is not noise to
+        accept. Without `[ui]` this does nothing at all.
+        """
+        ui = self.cfg.ui
+        if not ui.enabled or not uilane.touches_ui(gitops.diff_names(path, base_sha), ui.paths):
+            return
+        matrix = [u for u in (plan or {}).get("ui_use_cases", []) if isinstance(u, dict)]
+        if not ui.command:
+            report.ui = uilane.UiLaneResult(status="unconfigured", use_cases=matrix)
+            verdict.unconfigured.append(uilane.UNCONFIGURED_LABEL)
+            telemetry.event("gate.ui_lane", **{"devflow.ran": False, "devflow.ok": True,
+                                               "devflow.duration_s": 0.0, "devflow.cases": 0})
+            return
+        result = uilane.run_lane(self.cfg, path, matrix)
+        report.ui = result
+        telemetry.event("gate.ui_lane", **{
+            "devflow.ran": True, "devflow.ok": result.ok, "devflow.duration_s": result.duration_s,
+            "devflow.cases": len(result.report.cases) if result.report else 0})
+        if not result.ok:
+            verdict.ok = False
+            verdict.new_failures.append(baseline.NewFailure(
+                ".", "ui", ui.command, list(result.reasons),
+                "\n".join(filter(None, [result.output_tail[-600:], result.details]))))
 
     @staticmethod
     def _bounded_impact(impact) -> dict | None:
@@ -693,8 +737,14 @@ class Engine:
                 tests = graphctx.impacted_tests(impact, gitops.diff_names(wt, base_sha))[:IMPACT_LIST_CAP]
         if bounded is not None:
             bounded["impacted_tests"] = tests
-        return {"results": results, "failures": failures, "impact": bounded,
-                "impacted_tests": tests}
+        evidence = {"results": results, "failures": failures, "impact": bounded,
+                    "impacted_tests": tests}
+        if report is not None and report.ui is not None and report.ui.ran:
+            lane = report.ui.to_evidence()
+            if report.ui.use_cases:
+                lane["table"] = uilane.format_table(report.ui.use_cases[:12], report.ui.report)
+            evidence["ui_lane"] = lane
+        return evidence
 
     def _failure_text(self, verdict: baseline.Verdict, findings: list[diffguard.Finding]) -> str:
         lines = []
@@ -724,7 +774,8 @@ class Engine:
             report, impact = None, None
         else:
             impact = self._impact(wt, t.base_sha)
-            verdict, findings, report = self._verify(wt, t.base_sha, impact)
+            verdict, findings, report = self._verify(wt, t.base_sha, impact,
+                                                     self._latest(t, "plan"))
         ok = verdict.ok and not diffguard.blocking(findings)
         evidence = self._evidence(wt, t.base_sha, verdict, report, impact)
         self._put(t, "gates", {
@@ -803,8 +854,9 @@ class Engine:
         review_wt = worktree.create_detached(
             self.cfg.root, self.cfg.worktree_root / f"{t.branch.split('/', 1)[-1]}-review", head)
         impact = self._impact(review_wt, t.base_sha)
-        verdict, findings, report = self._verify(review_wt, t.base_sha, impact)
+        verdict, findings, report = self._verify(review_wt, t.base_sha, impact, plan)
         evidence = self._evidence(review_wt, t.base_sha, verdict, report, impact)
+        ui_verification, ui_blocking, ui_advisory = self._ui_verification(t, review_wt, plan, report)
         blast = self._blast_radius(review_wt, t.base_sha, impact)
         facts = verdict.summary() + (f"\nNot configured: {', '.join(verdict.unconfigured)}"
                                      if verdict.unconfigured else "")
@@ -812,24 +864,16 @@ class Engine:
         diff = gitops.git(review_wt, "diff", f"{t.base_sha}...HEAD", timeout=120)
         req = self._request(t, "reviewer",
                             prompts.reviewer_task(plan, self._latest(t, "test_plan") or {}, facts,
-                                                  stat, t.base_sha, diff, blast_radius=blast),
+                                                  stat, t.base_sha, diff, blast_radius=blast,
+                                                  ui_verification=(ui_verification or {}).get("table")),
                             schema="review", read_only=True, cwd=review_wt,
                             files=gitops.diff_names(review_wt, t.base_sha))
-        if "reviewer" in self.agents:
-            # A dedicated supervisor can review without entering the coding-agent pool.
-            from .router import RoutedResult
-            reviewer = self.agents["reviewer"]
-            result = run_structured(reviewer, req, self.cfg.root)
-            self._record_direct(reviewer, "reviewer", req, result)
-            routed = RoutedResult(result, reviewer.name, switched=False,
-                                  independent=reviewer.name != t.sessions.get("coder_agent", ""))
-        else:
-            routed = run_routed(self.router, req, t.id,
-                                avoid={t.sessions.get("coder_agent", "")},
-                                structured=True, root=self.cfg.root)
+        routed = self._review_run(t, req)
         review = routed.result.data
 
-        blocking = [f for f in review["findings"] if f.get("blocking")]
+        # The evaluator can only add blockers; the review's own findings stay as they were.
+        findings_all = [*review["findings"], *ui_blocking, *ui_advisory]
+        blocking = [f for f in findings_all if f.get("blocking")]
         engine_ok = verdict.ok and not diffguard.blocking(findings)
         approved = review["verdict"] == "approve" and not blocking and engine_ok
         if review["verdict"] == "approve" and not engine_ok:
@@ -839,11 +883,15 @@ class Engine:
         self._put(t, "review", {"agent": routed.agent, "independent": routed.independent,
                                 "sha": head,
                                 "verdict": review["verdict"], "approved": approved,
-                                "findings": review["findings"], "engine_gates_ok": engine_ok,
+                                "findings": findings_all, "engine_gates_ok": engine_ok,
                                 "facts": facts, "notes": review["integration"].get("notes", ""),
                                 "impact": evidence["impact"], "gate_results": evidence["results"],
-                                "reply": routed.result.text[-3000:]}, ok=approved)
-        self._say(t, self._format_review(review, routed.agent, routed.independent, facts, approved),
+                                "reply": routed.result.text[-3000:],
+                                **({"ui_verification": ui_verification} if ui_verification else {})},
+                  ok=approved)
+        self._say(t, self._format_review({**review, "findings": findings_all}, routed.agent,
+                                         routed.independent, facts, approved,
+                                         (ui_verification or {}).get("table")),
                   number=self._pr_number(t))
 
         if approved:
@@ -871,13 +919,64 @@ class Engine:
         self.store.save_ticket(t)
         self._move(t, State.CHANGES_REQUESTED, routed.agent, f"{len(blocking)} blocking finding(s)")
 
+    def _review_run(self, t: Ticket, req: AgentRequest):
+        """Run a reviewer-class request: the dedicated reviewer agent if any, else routed
+        away from the coder's tool."""
+        if "reviewer" in self.agents:
+            # A dedicated supervisor can review without entering the coding-agent pool.
+            from .router import RoutedResult
+            reviewer = self.agents["reviewer"]
+            result = run_structured(reviewer, req, self.cfg.root)
+            self._record_direct(reviewer, "reviewer", req, result)
+            return RoutedResult(result, reviewer.name, switched=False,
+                                independent=reviewer.name != t.sessions.get("coder_agent", ""))
+        return run_routed(self.router, req, t.id, avoid={t.sessions.get("coder_agent", "")},
+                          structured=True, root=self.cfg.root)
+
+    def _ui_verification(self, t: Ticket, review_wt: Path, plan: dict, report: GateReport | None
+                         ) -> tuple[dict | None, list[dict], list[dict]]:
+        """The use-case table, plus blocking and advisory findings from the evaluator.
+
+        The evaluator runs once, only after the deterministic lane ran and passed, and the
+        engine corrects whatever it says against the lane's own report.
+        """
+        lane = report.ui if report is not None else None
+        matrix = [u for u in plan.get("ui_use_cases", []) if isinstance(u, dict)]
+        if lane is None or not lane.ran or not matrix:
+            return None, [], []
+        matrix = matrix[:12]
+        evaluation, blocking, advisory = None, [], []
+        if lane.ok:
+            evaluation = self._ui_evaluation(t, review_wt, plan, lane)
+            evaluation, blocking = uilane.reconcile(matrix, lane.report, evaluation)
+            advisory = [{"id": str(f.get("id", "ui-finding")), "severity": f.get("severity", "nit"),
+                         "blocking": False, "file": "(ui evaluator)",
+                         "summary": str(f.get("summary", ""))}
+                        for f in evaluation.get("findings", [])
+                        if isinstance(f, dict) and not f.get("blocking")]
+        rows = uilane.verification_rows(matrix, lane.report, evaluation)
+        return ({"table": uilane.format_table(matrix, lane.report, evaluation), "rows": rows,
+                 "evaluated": evaluation is not None,
+                 "notes": str((evaluation or {}).get("notes", ""))[:1000]},
+                blocking, advisory)
+
+    def _ui_evaluation(self, t: Ticket, review_wt: Path, plan: dict, lane) -> dict:
+        digest = uilane.bounded_digest(lane.report)
+        req = self._request(t, "ui_evaluator",
+                            prompts.ui_evaluator_task(plan, plan.get("acceptance_criteria", []),
+                                                      digest),
+                            schema="ui_evaluation", read_only=True, cwd=review_wt)
+        return self._review_run(t, req).result.data
+
     @staticmethod
-    def _format_review(review: dict, agent: str, independent: bool, facts: str, approved: bool) -> str:
+    def _format_review(review: dict, agent: str, independent: bool, facts: str, approved: bool,
+                       ui_table: str | None = None) -> str:
         head = "approved" if approved else "changes requested"
         note = "" if independent else "\n_Note: reviewed by the same tool that wrote the code._"
         items = "\n".join(f"- **{f['severity']}**{' (blocking)' if f.get('blocking') else ''} "
                           f"`{f['file']}`: {f['summary']}" for f in review["findings"]) or "- none"
-        return f"**devflow review ({agent}): {head}**{note}\n\n{items}\n\n_Gates:_ {facts}"
+        table = f"\n\n{ui_table}" if ui_table else ""
+        return f"**devflow review ({agent}): {head}**{note}\n\n{items}\n\n_Gates:_ {facts}{table}"
 
     def _changes_requested(self, t: Ticket) -> None:
         self._move(t, State.IMPLEMENTING, "engine", "addressing review")

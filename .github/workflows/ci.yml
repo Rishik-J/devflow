@@ -11,6 +11,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv run --no-project --with ruff ruff check .
       - run: uv run --no-project --with pytest --with-editable . python -m pytest -q
+  ui-lane:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv && uv pip install pytest playwright -e .
+      - run: .venv/bin/playwright install --with-deps chromium
+      - run: DEVFLOW_UI_LANE=1 .venv/bin/python -m pytest tests/ui -p devflow.uirunner -q
   observability-image:
     runs-on: ubuntu-latest
     steps:

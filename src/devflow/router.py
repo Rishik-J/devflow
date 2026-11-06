@@ -93,6 +93,9 @@ class Router:
         self.now, self.ready = now, ready
 
     def routes(self, role: str) -> bool:
+        if role == "ui_evaluator":
+            # Configs written before this role existed route it like the reviewer.
+            return role in self.cfg.roles or "reviewer" in self.cfg.roles
         return role in self.cfg.roles
 
     def budget(self, name: str) -> AgentBudget:
