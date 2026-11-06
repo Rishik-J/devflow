@@ -30,6 +30,7 @@ def _init(args: argparse.Namespace) -> int:
         print("\nNeeds your input (edit .devflow/config.toml):")
         for item in r.needs_input:
             print(f"  * {item}")
+    print("Next: run `devflow ui` and open Setup to check GitHub, agents, OpenClaw, Graphify, and the Project queue.")
     return 0
 
 

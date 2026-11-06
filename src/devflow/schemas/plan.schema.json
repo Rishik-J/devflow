@@ -56,6 +56,21 @@
       "type": "array",
       "description": "Capabilities needed to verify this change: bind local sockets, run a browser, or reach the network. Leave empty if none.",
       "items": { "enum": ["sockets", "browser", "network"] }
+    },
+    "ui_use_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "kind", "description", "criterion_ids"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "kind": { "enum": ["happy_path", "state_persistence", "error_state", "responsive",
+                             "deep_link", "other"] },
+          "description": { "type": "string" },
+          "criterion_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
     }
   },
   "allOf": [

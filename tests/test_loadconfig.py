@@ -99,3 +99,47 @@ def test_agent_capabilities_parse_and_validate(tmp_path):
     cfg.write_text(base + 'capabilities = "sockets"\n')
     with pytest.raises(ConfigError, match="list of strings"):
         load_config(tmp_path)
+
+
+# ---------------------------------------------------------------- [ui]
+
+
+def _with_ui(root: Path, ui_toml: str):
+    config_path(root).parent.mkdir(parents=True, exist_ok=True)
+    config_path(root).write_text('[repo]\nname = "r"\n' + ui_toml)
+    return load_config(root)
+
+
+def test_ui_absent_leaves_defaults(py_repo: Path):
+    cfg = _with_ui(py_repo, "")
+    assert cfg.ui.enabled is False and cfg.ui.command == "" and cfg.ui.paths is None
+
+
+def test_ui_valid_section_and_enabled_defaults_to_true_with_a_command(py_repo: Path):
+    cfg = _with_ui(py_repo, '[ui]\ncommand = "pytest tests/ui"\npaths = ["web/**"]\n'
+                            "timeout_minutes = 7.5\n")
+    assert cfg.ui.enabled is True and cfg.ui.command == "pytest tests/ui"
+    assert cfg.ui.paths == ["web/**"] and cfg.ui.timeout_minutes == 7.5
+
+
+def test_ui_enabled_without_command_is_allowed_and_can_be_switched_off(py_repo: Path):
+    assert _with_ui(py_repo, "[ui]\nenabled = true\n").ui.command == ""
+    off = _with_ui(py_repo, '[ui]\ncommand = "x"\nenabled = false\n')
+    assert off.ui.enabled is False
+
+
+@pytest.mark.parametrize("body", [
+    "paths = 'web/**'", "paths = [1]", "command = 3", "timeout_minutes = 0",
+    "timeout_minutes = -1", "timeout_minutes = 'soon'", "timeout_minutes = true",
+    "enabled = 'yes'", "colour = 'red'",
+])
+def test_ui_invalid_values_raise_with_ui_prefix(py_repo: Path, body: str):
+    with pytest.raises(ConfigError, match=r"\[ui\]"):
+        _with_ui(py_repo, f"[ui]\n{body}\n")
+
+
+def test_ui_must_be_a_table(py_repo: Path):
+    with pytest.raises(ConfigError, match=r"\[ui\]"):
+        config_path(py_repo).parent.mkdir(parents=True, exist_ok=True)
+        config_path(py_repo).write_text('ui = 3\n[repo]\nname = "r"\n')
+        load_config(py_repo)

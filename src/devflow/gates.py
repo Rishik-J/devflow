@@ -18,10 +18,14 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import telemetry
 from .detect import GATES
 from .loadconfig import Config
+
+if TYPE_CHECKING:
+    from .uilane import UiLaneResult
 
 TAIL_CHARS = 6000
 SECRET_PATTERNS = (
@@ -108,6 +112,7 @@ class GateReport:
     results: list[GateResult] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     priority: list[GateResult] = field(default_factory=list)  # diagnostics only
+    ui: UiLaneResult | None = None  # set by the engine when the UI lane ran; never cached
 
     @property
     def ok(self) -> bool:

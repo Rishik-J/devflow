@@ -10,7 +10,7 @@ Repository-aware engineering workflows, orchestrated with OpenClaw and executed 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[Website](https://rishik-j.github.io/devflow/) · [Get started](#quick-start) · [Setup guide](docs/getting-started.md) · [Local tracing](#local-traces-and-workflow-metrics) · [Architecture](DESIGN.md) · [Contributing](CONTRIBUTING.md)
+[Website](https://rishik-j.github.io/devflow/) · [Get started](#quick-start) · [Setup guide](docs/getting-started.md) · [UI lane](docs/ui-lane.md) · [Local tracing](#local-traces-and-workflow-metrics) · [Architecture](DESIGN.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -232,6 +232,8 @@ budget_chars = 4000
 These are excerpts to edit in the generated file, not extra tables to append. Setting `require_integration = true` blocks review until at least one integration gate is configured. The default is `false`.
 
 ## Dashboard and ticket inspector
+
+Open `devflow ui` and select **Setup** to see a read-only onboarding checklist for the current repository. It checks the Git remote, GitHub CLI authentication, generated Devflow configuration, Claude Code/Codex/Cursor CLI sign-in, the OpenClaw `devflow` planner agent, local Graphify freshness, and the configured Project queue. Each row shows a terminal command for the next step; **Recheck connections** refreshes the results. The page does not receive credentials or run authentication commands on your behalf. Only one coding CLI is required; the others are optional. A configured Project is reported from local configuration, so use `devflow board` to verify actual Project access before running tickets.
 
 `devflow ui` serves a local board at `http://127.0.0.1:8788/`. Click a ticket card (or open `/#ticket-<n>`) to slide in a read-only inspector with Overview, Plan & Decisions, Blast radius and Verification & Gates tabs. Esc or a click outside closes it. The drawer reads `GET /api/ticket/<issue>`, which returns the ticket's state, latest plan and test strategy, persisted gate results and impact report, review verdict and findings, matching trace spans (names, durations, outcomes) and the GitHub issue body when `gh` is available (otherwise `brief.available` is `false`). Unknown issues return 404 and invalid ids 400. Gate evidence is recorded by runs made after this feature; older tickets show empty sections.
 
