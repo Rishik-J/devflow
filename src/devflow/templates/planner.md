@@ -23,6 +23,13 @@ $gates_summary
    under `follow_ups` (a short title and why it matters) and they become separate backlog
    tickets. Only list problems you actually saw in the code, not speculation.
 
+5. If a step touches user-facing files (HTML, CSS, JS/TS, components, static assets) and the
+   repo has a browser UI lane, add `ui_use_cases`: 3 to 6 objects with `id`, `title`, `kind`
+   (happy_path | state_persistence | error_state | responsive | deep_link | other),
+   `description` and `criterion_ids` that exist in your acceptance criteria. The coder will write
+   browser scenarios tagged with these ids using `ui_case`. Plans that do not touch
+   user-facing files need none.
+
 ## Capabilities
 If verifying the change needs to bind a local socket or port (a test server), run a browser, or
 reach the network, list those in `requires` (`sockets`, `browser`, `network`). Some coding agents

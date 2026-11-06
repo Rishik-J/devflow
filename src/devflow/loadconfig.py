@@ -40,7 +40,7 @@ class AgentBudget:
 
 @dataclass
 class RoutingCfg:
-    roles: tuple[str, ...] = ("coder", "reviewer", "test_planner")
+    roles: tuple[str, ...] = ("coder", "reviewer", "test_planner", "ui_evaluator")
     strategy: str = "headroom"
     cooldown_minutes: float = 30.0
     cooldown_max_hours: float = 6.0
@@ -89,6 +89,16 @@ class LearningCfg:
 
 
 @dataclass
+class UiCfg:
+    """The browser lane. `paths` None means the defaults in uilane.DEFAULT_UI_PATTERNS."""
+
+    enabled: bool = False
+    paths: list[str] | None = None
+    command: str = ""
+    timeout_minutes: float = 10.0
+
+
+@dataclass
 class Config:
     root: Path
     name: str
@@ -109,6 +119,9 @@ class Config:
     board: BoardCfg = field(default_factory=BoardCfg)
     learning: LearningCfg = field(default_factory=LearningCfg)
     planning: PlanningCfg = field(default_factory=PlanningCfg)
+
+
+    ui: UiCfg = field(default_factory=UiCfg)
 
 
 def config_path(root: Path) -> Path:
@@ -221,6 +234,35 @@ def _planning(data: dict) -> PlanningCfg:
     return PlanningCfg(lint=mode, lint_retries=int(_number(section, "lint_retries", 2, "[planning]")))
 
 
+UI_KEYS = {"enabled", "paths", "command", "timeout_minutes"}
+
+
+def _ui(data: dict) -> UiCfg:
+    section = data.get("ui")
+    if section is None:
+        return UiCfg()
+    if not isinstance(section, dict):
+        raise ConfigError("[ui] must be a table")
+    unknown = set(section) - UI_KEYS
+    if unknown:
+        raise ConfigError(f"[ui] unknown keys {sorted(unknown)}; use {sorted(UI_KEYS)}")
+    command = section.get("command", "")
+    if not isinstance(command, str):
+        raise ConfigError(f"[ui] command must be a string, got {command!r}")
+    paths = section.get("paths")
+    if paths is not None and not (
+            isinstance(paths, list) and all(isinstance(p, str) and p for p in paths)):
+        raise ConfigError("[ui] paths must be a list of non-empty glob strings")
+    enabled = section.get("enabled", bool(command.strip()))
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"[ui] enabled must be true or false, got {enabled!r}")
+    timeout = section.get("timeout_minutes", 10)
+    if isinstance(timeout, bool) or not isinstance(timeout, int | float) or timeout <= 0:
+        raise ConfigError(f"[ui] timeout_minutes must be a positive number, got {timeout!r}")
+    return UiCfg(enabled=enabled, paths=list(paths) if paths is not None else None,
+                 command=command.strip(), timeout_minutes=float(timeout))
+
+
 def load_config(root: Path) -> Config:
     path = config_path(root)
     if not path.exists():
@@ -279,4 +321,7 @@ def load_config(root: Path) -> Config:
         board=_board(data),
         learning=_learning(data),
         planning=_planning(data),
+
+
+        ui=_ui(data),
     )
