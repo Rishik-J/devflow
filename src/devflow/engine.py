@@ -30,6 +30,7 @@ from . import (
     followups,
     gitops,
     graphctx,
+    planlint,
     prompts,
     stall,
     telemetry,
@@ -538,6 +539,7 @@ class Engine:
                             schema="plan", read_only=True,
                             slice_text=f"{issue.title}\n\n{issue.body}")
         plan = self._plain("planner", req).data
+        plan = self._lint_plan(t, plan, issue, answers, feedback, previous)
         self._put(t, "plan", plan)
 
         if plan["status"] == "needs_clarification":
@@ -564,6 +566,63 @@ class Engine:
         if self._gate_on("plan_approval"):
             self.notifier.send(f"#{t.issue} ({t.title}): plan ready for your approval.")
         self._move(t, State.AWAITING_PLAN_APPROVAL, "planner", "plan ready")
+
+    def _lint_facts(self, t: Ticket) -> str:
+        lint = self._latest(t, "plan_lint")
+        if lint is None:
+            return ""
+        found = lint["findings"]
+        hard = [f for f in found if f["severity"] == "block"]
+        soft = [f for f in found if f["severity"] != "block"]
+        if hard:
+            text = ("\n\nDeterministic checks reported blocking problems with this plan (not rejected "
+                    "automatically in this mode). Weigh them:\n")
+            text += "\n".join(f"- [{f['kind']}] {f['file']}: {f['detail']}" for f in hard)
+        else:
+            text = ("\n\nDeterministic checks already ran on this plan: paths are inside the repository, "
+                    "none is a protected file, and no configured gate is misdescribed. Do not re-verify those.")
+        if soft:
+            text += "\nUnconfirmed warnings worth a look:\n" + "\n".join(
+                f"- [{f['kind']}] {f['file']}: {f['detail']}" for f in soft)
+        return text
+
+    def _lint_plan(self, t: Ticket, plan: dict, issue, answers: list[str], feedback: str,
+                   previous: dict) -> dict:
+        """Run the deterministic plan checks, re-asking the planner while they block.
+
+        Failed drafts are stored as `plan_draft` so they do not use up MAX_PLAN_CYCLES, which
+        counts only plans that reach a reviewer or a person.
+        """
+        mode = self.cfg.planning.lint
+        if mode == "off" or plan.get("status") != "ready":
+            return plan
+        retries = 0
+        while True:
+            findings = planlint.lint(plan, self.cfg, self._wt(t))
+            blocked = planlint.blocking(findings)
+            telemetry.event("plan.lint", **{"devflow.lint_blocking": len(blocked),
+                                            "devflow.lint_warnings": len(findings) - len(blocked),
+                                            "devflow.lint_retries": retries,
+                                            "devflow.lint_mode": mode})
+            self._put(t, "plan_lint", {"findings": [vars(f) for f in findings], "mode": mode,
+                                       "retries": retries}, ok=not blocked)
+            if not blocked or mode != "block":
+                return plan
+            self._put(t, "plan_draft", plan, ok=False)
+            if retries >= self.cfg.planning.lint_retries:
+                raise _Escalate("the plan kept failing deterministic checks: "
+                                + "; ".join(f"[{f.kind}] {f.file}: {f.detail}" for f in blocked)[:600])
+            retries += 1
+            lint_feedback = planlint.format_findings(findings)
+            req = self._request(
+                t, "planner",
+                prompts.planner_task(issue, answers, (feedback + "\n\n" if feedback else "") + lint_feedback,
+                                     previous.get("questions"),
+                                     {project.path: project.gates for project in self.cfg.projects}),
+                schema="plan", read_only=True, slice_text=f"{issue.title}\n\n{issue.body}")
+            plan = self._plain("planner", req).data
+            if plan.get("status") != "ready":
+                return plan
 
     @staticmethod
     def _format_plan(plan: dict) -> str:
@@ -613,7 +672,8 @@ class Engine:
                 + json.dumps({project.path: project.gates for project in self.cfg.projects},
                              indent=2, sort_keys=True)
                 + "\nReject a plan that says a configured integration gate is missing, "
-                "unit-only, or outside this ticket's verification.",
+                "unit-only, or outside this ticket's verification."
+                + self._lint_facts(t),
                 schema="plan_review", read_only=True,
             )
             plan_result = run_structured(reviewer, req, self.cfg.root)
